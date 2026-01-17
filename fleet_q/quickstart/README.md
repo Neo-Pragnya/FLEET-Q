@@ -875,7 +875,6 @@ We're grateful to the Raquel project for demonstrating that **SQL-backed task qu
 ## 📚 Further Reading
 
 - [FLEET-Q Concept Documentation](../docs/FLEET-Q%20-%20Federated%20Leaderless%20Execution%20%26%20Elastic%20Tasking%20Queue.md)
-- [Implementation Requirements](../docs/IMPLEMENTATION_REQUIREMENTS.md)
 - [Snowflake Transaction Isolation](https://docs.snowflake.com/en/sql-reference/transactions.html)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [Raquel - SQL-based Job Queue](https://github.com/vduseev/raquel)

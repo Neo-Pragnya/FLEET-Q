@@ -1,0 +1,112 @@
+site_name: FLEET-Q Documentation
+site_description: Brokerless distributed task queue for EKS environments
+site_author: FLEET-Q Team
+site_url: https://fleet-q.readthedocs.io
+
+repo_name: fleet-q/fleet-q
+repo_url: https://github.com/fleet-q/fleet-q
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_toc_entry: false
+            merge_init_into_class: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+    - Configuration: getting-started/configuration.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Components: architecture/components.md
+    - Data Flow: architecture/data-flow.md
+    - State Management: architecture/state-management.md
+  - API Reference:
+    - REST Endpoints: api/endpoints.md
+    - Data Models: api/models.md
+    - Error Handling: api/errors.md
+  - Operations:
+    - Deployment: operations/deployment.md
+    - Docker Guide: operations/docker.md
+    - Monitoring: operations/monitoring.md
+    - Troubleshooting: operations/troubleshooting.md
+  - Development:
+    - Contributing: development/contributing.md
+    - Testing: development/testing.md
+    - Local Development: development/local-setup.md
+  - Utilities:
+    - Backoff Utility: utilities/backoff.md
+    - Storage Interfaces: utilities/storage.md
+  - Examples:
+    - Basic Usage: examples/basic-usage.md
+    - Step Implementation: examples/step-implementation.md
+    - Idempotency Patterns: examples/idempotency.md
+    - Environment Configurations: examples/environments.md
+  - Appendix:
+    - Why FLEET-Q?: appendix/why-fleet-q.md
+    - Comparison with Alternatives: appendix/alternatives.md
+    - FAQ: appendix/faq.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/fleet-q/fleet-q
+  version:
+    provider: mike

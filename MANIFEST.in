@@ -1,0 +1,40 @@
+# Include documentation and metadata files
+include README.md
+include LICENSE
+include CHANGELOG.md
+include pyproject.toml
+
+# Include documentation
+recursive-include docs *.md *.yml *.yaml
+include mkdocs.yml
+
+# Include examples
+recursive-include examples *.py *.md *.json *.yaml *.yml
+
+# Include tests (for source distribution)
+recursive-include tests *.py
+
+# Include configuration files
+include .env.example
+include .env.docker.example
+include docker-compose.yml
+include docker-compose.override.yml
+include Dockerfile
+
+# Include scripts
+recursive-include scripts *.sh *.py
+
+# Exclude development and build artifacts
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .pytest_cache
+global-exclude .mypy_cache
+global-exclude .coverage
+global-exclude .DS_Store
+global-exclude *.egg-info
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * .git*
+recursive-exclude * .venv
+recursive-exclude * build
+recursive-exclude * dist

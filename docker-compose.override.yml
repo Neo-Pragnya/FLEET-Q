@@ -1,0 +1,90 @@
+# Docker Compose Override for Local Development
+# This file provides development-specific configuration that extends docker-compose.yml
+# It's automatically loaded by docker-compose and provides faster iteration cycles
+
+version: '3.8'
+
+services:
+  # Override leader configuration for development
+  fleet-q-leader:
+    environment:
+      # Development-specific timing (faster cycles)
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=10
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=2
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=30
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=60
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=30
+      
+      # Development logging
+      - FLEET_Q_LOG_LEVEL=DEBUG
+      - FLEET_Q_LOG_FORMAT=text
+      
+      # Development backoff (faster retries)
+      - FLEET_Q_DEFAULT_MAX_ATTEMPTS=3
+      - FLEET_Q_DEFAULT_BASE_DELAY_MS=50
+      - FLEET_Q_DEFAULT_MAX_DELAY_MS=5000
+    
+    # Mount source code for hot reloading (optional)
+    volumes:
+      - ./fleet_q:/app/fleet_q:ro
+      - fleet-q-leader-data:/app/data
+      - fleet-q-leader-logs:/app/logs
+    
+    # Faster health checks for development
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+
+  # Override worker configurations for development
+  fleet-q-worker-1:
+    environment:
+      # Development-specific timing
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=10
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=2
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=30
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=60
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=30
+      
+      # Development logging
+      - FLEET_Q_LOG_LEVEL=DEBUG
+      - FLEET_Q_LOG_FORMAT=text
+      
+      # Reduced parallelism for development
+      - FLEET_Q_MAX_PARALLELISM=3
+    
+    volumes:
+      - ./fleet_q:/app/fleet_q:ro
+      - fleet-q-worker-1-data:/app/data
+      - fleet-q-worker-1-logs:/app/logs
+    
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+
+  fleet-q-worker-2:
+    environment:
+      # Development-specific timing
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=10
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=2
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=30
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=60
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=30
+      
+      # Development logging
+      - FLEET_Q_LOG_LEVEL=DEBUG
+      - FLEET_Q_LOG_FORMAT=text
+      
+      # Reduced parallelism for development
+      - FLEET_Q_MAX_PARALLELISM=2
+    
+    volumes:
+      - ./fleet_q:/app/fleet_q:ro
+      - fleet-q-worker-2-data:/app/data
+      - fleet-q-worker-2-logs:/app/logs
+    
+    healthcheck:
+      interval: 15s
+      timeout: 5s
+      start_period: 20s

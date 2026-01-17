@@ -1,0 +1,223 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fleet-q"
+version = "0.1.0"
+description = "Brokerless distributed task queue for EKS environments using Snowflake coordination"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "FLEET-Q Team", email = "team@fleet-q.dev"},
+]
+maintainers = [
+    {name = "FLEET-Q Team", email = "team@fleet-q.dev"},
+]
+keywords = [
+    "task-queue",
+    "distributed-systems", 
+    "kubernetes",
+    "eks",
+    "snowflake",
+    "async",
+    "worker",
+    "job-queue",
+    "brokerless",
+    "container",
+    "microservices"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Framework :: AsyncIO",
+    "Framework :: FastAPI",
+    "Environment :: Web Environment",
+    "Typing :: Typed",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "snowflake-connector-python>=3.6.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "structlog>=23.2.0",
+    "asyncio-mqtt>=0.16.0",
+    "aiosqlite>=0.19.0",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "hypothesis>=6.88.0",
+    "black>=23.9.0",
+    "isort>=5.12.0",
+    "flake8>=6.1.0",
+    "mypy>=1.6.0",
+    "pre-commit>=3.5.0",
+    "httpx>=0.25.0",  # For testing HTTP clients
+]
+test = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "hypothesis>=6.88.0",
+    "httpx>=0.25.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0",
+    "mkdocstrings[python]>=0.24.0",
+    "pymdown-extensions>=10.0.0",
+]
+all = [
+    "fleet-q[dev,docs]",
+]
+
+[project.scripts]
+fleet-q = "fleet_q.main:main"
+
+[project.entry-points."fleet_q.storage"]
+snowflake = "fleet_q.snowflake_storage:SnowflakeStorage"
+sqlite = "fleet_q.sqlite_simulation_storage:SQLiteSimulationStorage"
+
+[project.entry-points."fleet_q.step_processors"]
+# Example entry points for step processors
+# Users can register their own step processors here
+
+[project.urls]
+Homepage = "https://github.com/fleet-q/fleet-q"
+Documentation = "https://fleet-q.readthedocs.io"
+Repository = "https://github.com/fleet-q/fleet-q"
+"Bug Tracker" = "https://github.com/fleet-q/fleet-q/issues"
+"Source Code" = "https://github.com/fleet-q/fleet-q"
+Changelog = "https://github.com/fleet-q/fleet-q/blob/main/CHANGELOG.md"
+"Funding" = "https://github.com/sponsors/fleet-q"
+"Say Thanks!" = "https://github.com/fleet-q/fleet-q/stargazers"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fleet_q"]
+exclude = [
+    "fleet_q/quickstart/",
+    "*.pyc",
+    "__pycache__",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/fleet_q",
+    "/tests",
+    "/docs",
+    "/examples",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "/.git",
+    "/.pytest_cache",
+    "/.mypy_cache",
+    "/build",
+    "/dist",
+    "*.pyc",
+    "__pycache__",
+]
+
+[tool.hatch.version]
+path = "fleet_q/__init__.py"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "property_test: Property-based tests using Hypothesis",
+    "integration: Integration tests requiring external dependencies",
+    "slow: Slow tests that take more than 1 second",
+]
+
+[tool.coverage.run]
+source = ["fleet_q"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["fleet_q"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "snowflake.connector.*",
+    "structlog.*",
+]
+ignore_missing_imports = true
