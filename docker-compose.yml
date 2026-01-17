@@ -1,0 +1,260 @@
+version: '3.8'
+
+# FLEET-Q Docker Compose Configuration
+
+services:
+  # Primary FLEET-Q pod (Leader + Worker)
+  fleet-q-leader:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: fleet-q-leader
+    ports:
+      - "8000:8000"
+    environment:
+      # Required Snowflake configuration
+      - FLEET_Q_SNOWFLAKE_ACCOUNT=${FLEET_Q_SNOWFLAKE_ACCOUNT}
+      - FLEET_Q_SNOWFLAKE_USER=${FLEET_Q_SNOWFLAKE_USER}
+      - FLEET_Q_SNOWFLAKE_PASSWORD=${FLEET_Q_SNOWFLAKE_PASSWORD}
+      - FLEET_Q_SNOWFLAKE_DATABASE=${FLEET_Q_SNOWFLAKE_DATABASE}
+      - FLEET_Q_SNOWFLAKE_SCHEMA=${FLEET_Q_SNOWFLAKE_SCHEMA:-PUBLIC}
+      - FLEET_Q_SNOWFLAKE_WAREHOUSE=${FLEET_Q_SNOWFLAKE_WAREHOUSE}
+      - FLEET_Q_SNOWFLAKE_ROLE=${FLEET_Q_SNOWFLAKE_ROLE}
+      
+      # Pod configuration
+      - FLEET_Q_POD_ID=fleet-q-leader-001
+      - FLEET_Q_MAX_PARALLELISM=${FLEET_Q_MAX_PARALLELISM:-10}
+      - FLEET_Q_CAPACITY_THRESHOLD=${FLEET_Q_CAPACITY_THRESHOLD:-0.8}
+      
+      # Timing configuration
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=${FLEET_Q_HEARTBEAT_INTERVAL_SECONDS:-30}
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=${FLEET_Q_CLAIM_INTERVAL_SECONDS:-5}
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=${FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS:-60}
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=${FLEET_Q_RECOVERY_INTERVAL_SECONDS:-300}
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=${FLEET_Q_DEAD_POD_THRESHOLD_SECONDS:-180}
+      
+      # Backoff configuration
+      - FLEET_Q_DEFAULT_MAX_ATTEMPTS=${FLEET_Q_DEFAULT_MAX_ATTEMPTS:-5}
+      - FLEET_Q_DEFAULT_BASE_DELAY_MS=${FLEET_Q_DEFAULT_BASE_DELAY_MS:-100}
+      - FLEET_Q_DEFAULT_MAX_DELAY_MS=${FLEET_Q_DEFAULT_MAX_DELAY_MS:-30000}
+      
+      # API configuration
+      - FLEET_Q_API_HOST=0.0.0.0
+      - FLEET_Q_API_PORT=8000
+      
+      # Logging configuration
+      - FLEET_Q_LOG_LEVEL=${FLEET_Q_LOG_LEVEL:-INFO}
+      - FLEET_Q_LOG_FORMAT=${FLEET_Q_LOG_FORMAT:-json}
+      
+      # SQLite configuration for local DLQ
+      - FLEET_Q_SQLITE_DB_PATH=/app/data/fleet_q_leader.db
+    volumes:
+      # Persist SQLite data for development (optional)
+      - fleet-q-leader-data:/app/data
+      - fleet-q-leader-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - fleet-q-network
+
+  # Secondary FLEET-Q pod (Worker only)
+  fleet-q-worker-1:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: fleet-q-worker-1
+    ports:
+      - "8001:8000"
+    environment:
+      # Same Snowflake configuration as leader
+      - FLEET_Q_SNOWFLAKE_ACCOUNT=${FLEET_Q_SNOWFLAKE_ACCOUNT}
+      - FLEET_Q_SNOWFLAKE_USER=${FLEET_Q_SNOWFLAKE_USER}
+      - FLEET_Q_SNOWFLAKE_PASSWORD=${FLEET_Q_SNOWFLAKE_PASSWORD}
+      - FLEET_Q_SNOWFLAKE_DATABASE=${FLEET_Q_SNOWFLAKE_DATABASE}
+      - FLEET_Q_SNOWFLAKE_SCHEMA=${FLEET_Q_SNOWFLAKE_SCHEMA:-PUBLIC}
+      - FLEET_Q_SNOWFLAKE_WAREHOUSE=${FLEET_Q_SNOWFLAKE_WAREHOUSE}
+      - FLEET_Q_SNOWFLAKE_ROLE=${FLEET_Q_SNOWFLAKE_ROLE}
+      
+      # Different pod configuration
+      - FLEET_Q_POD_ID=fleet-q-worker-001
+      - FLEET_Q_MAX_PARALLELISM=${FLEET_Q_MAX_PARALLELISM:-8}
+      - FLEET_Q_CAPACITY_THRESHOLD=${FLEET_Q_CAPACITY_THRESHOLD:-0.8}
+      
+      # Same timing configuration
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=${FLEET_Q_HEARTBEAT_INTERVAL_SECONDS:-30}
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=${FLEET_Q_CLAIM_INTERVAL_SECONDS:-5}
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=${FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS:-60}
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=${FLEET_Q_RECOVERY_INTERVAL_SECONDS:-300}
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=${FLEET_Q_DEAD_POD_THRESHOLD_SECONDS:-180}
+      
+      # Same backoff configuration
+      - FLEET_Q_DEFAULT_MAX_ATTEMPTS=${FLEET_Q_DEFAULT_MAX_ATTEMPTS:-5}
+      - FLEET_Q_DEFAULT_BASE_DELAY_MS=${FLEET_Q_DEFAULT_BASE_DELAY_MS:-100}
+      - FLEET_Q_DEFAULT_MAX_DELAY_MS=${FLEET_Q_DEFAULT_MAX_DELAY_MS:-30000}
+      
+      # API configuration
+      - FLEET_Q_API_HOST=0.0.0.0
+      - FLEET_Q_API_PORT=8000
+      
+      # Logging configuration
+      - FLEET_Q_LOG_LEVEL=${FLEET_Q_LOG_LEVEL:-INFO}
+      - FLEET_Q_LOG_FORMAT=${FLEET_Q_LOG_FORMAT:-json}
+      
+      # SQLite configuration for local DLQ
+      - FLEET_Q_SQLITE_DB_PATH=/app/data/fleet_q_worker1.db
+    volumes:
+      - fleet-q-worker-1-data:/app/data
+      - fleet-q-worker-1-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    depends_on:
+      - fleet-q-leader
+    networks:
+      - fleet-q-network
+
+  # Third FLEET-Q pod for testing multi-pod scenarios
+  fleet-q-worker-2:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: fleet-q-worker-2
+    ports:
+      - "8002:8000"
+    environment:
+      # Same Snowflake configuration
+      - FLEET_Q_SNOWFLAKE_ACCOUNT=${FLEET_Q_SNOWFLAKE_ACCOUNT}
+      - FLEET_Q_SNOWFLAKE_USER=${FLEET_Q_SNOWFLAKE_USER}
+      - FLEET_Q_SNOWFLAKE_PASSWORD=${FLEET_Q_SNOWFLAKE_PASSWORD}
+      - FLEET_Q_SNOWFLAKE_DATABASE=${FLEET_Q_SNOWFLAKE_DATABASE}
+      - FLEET_Q_SNOWFLAKE_SCHEMA=${FLEET_Q_SNOWFLAKE_SCHEMA:-PUBLIC}
+      - FLEET_Q_SNOWFLAKE_WAREHOUSE=${FLEET_Q_SNOWFLAKE_WAREHOUSE}
+      - FLEET_Q_SNOWFLAKE_ROLE=${FLEET_Q_SNOWFLAKE_ROLE}
+      
+      # Different pod configuration
+      - FLEET_Q_POD_ID=fleet-q-worker-002
+      - FLEET_Q_MAX_PARALLELISM=${FLEET_Q_MAX_PARALLELISM:-6}
+      - FLEET_Q_CAPACITY_THRESHOLD=${FLEET_Q_CAPACITY_THRESHOLD:-0.8}
+      
+      # Same timing configuration
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=${FLEET_Q_HEARTBEAT_INTERVAL_SECONDS:-30}
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=${FLEET_Q_CLAIM_INTERVAL_SECONDS:-5}
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=${FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS:-60}
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=${FLEET_Q_RECOVERY_INTERVAL_SECONDS:-300}
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=${FLEET_Q_DEAD_POD_THRESHOLD_SECONDS:-180}
+      
+      # Same backoff configuration
+      - FLEET_Q_DEFAULT_MAX_ATTEMPTS=${FLEET_Q_DEFAULT_MAX_ATTEMPTS:-5}
+      - FLEET_Q_DEFAULT_BASE_DELAY_MS=${FLEET_Q_DEFAULT_BASE_DELAY_MS:-100}
+      - FLEET_Q_DEFAULT_MAX_DELAY_MS=${FLEET_Q_DEFAULT_MAX_DELAY_MS:-30000}
+      
+      # API configuration
+      - FLEET_Q_API_HOST=0.0.0.0
+      - FLEET_Q_API_PORT=8000
+      
+      # Logging configuration
+      - FLEET_Q_LOG_LEVEL=${FLEET_Q_LOG_LEVEL:-INFO}
+      - FLEET_Q_LOG_FORMAT=${FLEET_Q_LOG_FORMAT:-json}
+      
+      # SQLite configuration for local DLQ
+      - FLEET_Q_SQLITE_DB_PATH=/app/data/fleet_q_worker2.db
+    volumes:
+      - fleet-q-worker-2-data:/app/data
+      - fleet-q-worker-2-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    depends_on:
+      - fleet-q-leader
+    networks:
+      - fleet-q-network
+
+  # Local Snowflake simulation using SQLite (for development without Snowflake)
+  fleet-q-dev-sqlite:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: fleet-q-dev-sqlite
+    ports:
+      - "8003:8000"
+    environment:
+      # Use SQLite simulation mode
+      - FLEET_Q_STORAGE_MODE=sqlite
+      - FLEET_Q_SQLITE_DB_PATH=/app/data/fleet_q_simulation.db
+      
+      # Dummy Snowflake config (not used in SQLite mode but required for validation)
+      - FLEET_Q_SNOWFLAKE_ACCOUNT=not-required-for-sqlite
+      - FLEET_Q_SNOWFLAKE_USER=not-required-for-sqlite
+      - FLEET_Q_SNOWFLAKE_PASSWORD=not-required-for-sqlite
+      - FLEET_Q_SNOWFLAKE_DATABASE=not-required-for-sqlite
+      
+      # Pod configuration
+      - FLEET_Q_POD_ID=fleet-q-dev-sqlite-001
+      - FLEET_Q_MAX_PARALLELISM=5
+      - FLEET_Q_CAPACITY_THRESHOLD=0.8
+      
+      # Faster intervals for development
+      - FLEET_Q_HEARTBEAT_INTERVAL_SECONDS=10
+      - FLEET_Q_CLAIM_INTERVAL_SECONDS=2
+      - FLEET_Q_LEADER_CHECK_INTERVAL_SECONDS=30
+      - FLEET_Q_RECOVERY_INTERVAL_SECONDS=60
+      - FLEET_Q_DEAD_POD_THRESHOLD_SECONDS=30
+      
+      # API configuration
+      - FLEET_Q_API_HOST=0.0.0.0
+      - FLEET_Q_API_PORT=8000
+      
+      # Development logging
+      - FLEET_Q_LOG_LEVEL=DEBUG
+      - FLEET_Q_LOG_FORMAT=text
+    volumes:
+      - fleet-q-dev-data:/app/data
+      - fleet-q-dev-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - fleet-q-network
+    profiles:
+      - dev-sqlite  # Only start with --profile dev-sqlite
+
+# Named volumes for data persistence
+volumes:
+  fleet-q-leader-data:
+    driver: local
+  fleet-q-leader-logs:
+    driver: local
+  fleet-q-worker-1-data:
+    driver: local
+  fleet-q-worker-1-logs:
+    driver: local
+  fleet-q-worker-2-data:
+    driver: local
+  fleet-q-worker-2-logs:
+    driver: local
+  fleet-q-dev-data:
+    driver: local
+  fleet-q-dev-logs:
+    driver: local
+
+# Network for inter-container communication (though FLEET-Q doesn't use direct pod communication)
+networks:
+  fleet-q-network:
+    driver: bridge
