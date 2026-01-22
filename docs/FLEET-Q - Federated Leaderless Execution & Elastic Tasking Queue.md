@@ -334,6 +334,699 @@ However, as your workload evolves and based on enterprise architectural requirem
 👉 MongoDB’s document model and horizontal transparency can _also_ support distributed queues. By using change streams or atomic updates, you can implement queue semantics — though you’ll need careful retry and consistency logic.
 
 ---
+# 🚀 Dynamic Throttling in FLEET-Q
+
+### (Adaptive Flow Control for Bedrock & External APIs)
+
+> **Goal**  
+> Prevent downstream APIs (e.g., Bedrock, OpenAI, internal services) from being overwhelmed,  
+> while **maximizing throughput without triggering throttling errors**.
+
+We want to:
+
+- 🔻 Throttle _down_ aggressively when throttling/errors appear
+- 🔺 Throttle _up_ cautiously when capacity frees up
+- 🧠 Learn continuously from response behavior
+- ⚙️ Apply this centrally in **FLEET-Q**, not individually per task
+
+This is **not retry logic** — this is **rate adaptation logic**.
+
+---
+## 🧠 Core Mental Model (Rocket Nozzle Analogy)
+
+Think of FLEET-Q as a **pressure-aware nozzle**:
+
+|Signal|Meaning|
+|---|---|
+|🔥 Throttle exception|Downstream pressure too high|
+|🟢 Fast successful responses|Available bandwidth|
+|🟡 Increased latency|Approaching saturation|
+|🔴 Sustained errors|Backpressure required|
+
+Instead of blindly retrying, **we reshape the flow itself**.
+
+---
+## 🧩 Where Throttling Lives in FLEET-Q
+
+Dynamic throttling should live **between task execution and external API calls**, not at the queue layer.
+
+```
+STEP EXECUTION
+   ↓
+[ THROTTLE CONTROLLER ]  ←—— shared state
+   ↓
+BEDROCK / EXTERNAL API
+```
+
+Key idea:
+
+- Tasks may be abundant
+    
+- **API capacity is scarce**
+    
+- FLEET-Q must _shape concurrency + rate_ centrally
+
+---
+## 🧭 Design Principles for Throttling
+
+|Principle|Why it matters|
+|---|---|
+|Feedback-driven|Static limits fail under bursty load|
+|Gradual ramp-up|Avoid oscillations|
+|Fast ramp-down|Protect downstream systems|
+|Shared state|Prevent N pods from overwhelming API|
+|Stateless tasks|Throttling must be orthogonal to task logic|
+
+---
+
+## 🧠 Core Throttling Strategies (What Works)
+
+Below are **proven mechanisms**, ranked from simplest → most adaptive.
+
+---
+## 1️⃣ Adaptive Concurrency Limiter (Highly Recommended)
+
+Instead of limiting _requests per second_, you limit **in-flight requests**.
+
+### How it works
+
+- Maintain a global or per-API **max_inflight** value
+    
+- Only allow that many concurrent calls
+    
+- Adjust dynamically based on feedback
+    
+
+### Signals
+
+|Signal|Action|
+|---|---|
+|Throttle exception|Decrease inflight aggressively|
+|Success|Increase inflight slowly|
+|High latency|Pause increase|
+|Sustained success|Gradual increase|
+
+### Control Logic (AIMD – Additive Increase, Multiplicative Decrease)
+
+This is the same principle used by TCP congestion control.
+
+```text
+On success:
+    inflight += +1   (slow)
+
+On throttle error:
+    inflight = inflight * 0.5  (fast)
+```
+
+### Why this is powerful
+
+- No need to guess QPS limits
+    
+- Automatically adapts to real capacity
+    
+- Stable under bursty workloads
+    
+
+> 💡 Netflix, Envoy, and gRPC all use variants of this
+
+---
+
+## 2️⃣ Token Bucket with Dynamic Refill Rate
+
+Classic rate limiting — but **with adaptive refill**.
+
+### Concept
+
+- Bucket holds tokens
+    
+- Each request consumes 1 token
+    
+- Tokens refill at a rate that **changes over time**
+    
+
+### Dynamic behavior
+
+|Condition|Action|
+|---|---|
+|Throttle errors|Reduce refill rate|
+|Stable success|Increase refill rate|
+|Idle time|Allow burst|
+
+### When this helps
+
+- APIs with known _soft_ rate limits
+    
+- Smooths bursts better than concurrency alone
+    
+
+⚠️ On its own, token buckets react slower than concurrency limiters.
+
+---
+
+## 3️⃣ Latency-Aware Throttling (Pressure Sensing)
+
+Latency is often an **early signal** before throttling.
+
+### Rule of thumb
+
+- Rising p95 / p99 latency = system under stress
+    
+
+### Usage
+
+- Track rolling latency window
+    
+- Pause throttle-up if latency increases
+    
+- Combine with concurrency limiter
+    
+
+This prevents “happy path overload” before errors appear.
+
+---
+
+## 4️⃣ Error-Weighted Feedback (Smart Signals)
+
+Not all failures are equal.
+
+|Error Type|Meaning|
+|---|---|
+|Throttling / 429|Immediate backpressure|
+|Timeout|Possibly saturation|
+|5xx|Downstream instability|
+|Client error|Do not affect throttle|
+
+Throttle controller should:
+
+- React strongly only to **capacity-related signals**
+    
+- Ignore logical or input errors
+    
+
+---
+
+## 🧠 Recommended FLEET-Q Throttle Architecture when using Adaptive Throttling
+
+### 🔧 Throttle Controller (Per External API)
+
+A reusable component inside FLEET-Q:
+
+```text
+ThrottleController
+ ├── max_inflight
+ ├── current_inflight
+ ├── success_window
+ ├── error_window
+ ├── latency_window
+ └── control_loop()
+```
+
+### Execution Flow
+
+```
+task execution
+   ↓
+await throttle.acquire()
+   ↓
+call external API
+   ↓
+throttle.release(success | throttle_error | latency)
+```
+
+---
+
+## 🧰 Throttle Controller Logic (Conceptual)
+
+### On acquire
+
+- Block or async-wait if `current_inflight >= max_inflight`
+    
+
+### On release
+
+|Outcome|Adjustment|
+|---|---|
+|Success|record success|
+|Throttle error|halve max_inflight|
+|High latency|pause growth|
+|Sustained success|slowly increase max_inflight|
+
+---
+## 🔁 Relationship to Exponential Backoff
+
+|Backoff|Throttling|
+|---|---|
+|Reacts after failure|Shapes load proactively|
+|Per-request|System-wide|
+|Time-based|Capacity-based|
+|Stateless|Stateful|
+
+**Best practice:**  
+Use **both together**.
+
+- Throttling controls _how much_ load you send
+    
+- Backoff controls _how fast retries happen_
+    
+
+---
+## 🧩 Where State Lives in FLEET-Q
+
+We have two good options:
+
+### Option A: Local Throttle per Pod (Simpler)
+
+- Each pod adapts independently
+- Works well if Bedrock limits are high
+
+### Option B: Leader-Coordinated Throttle (More Stable)
+
+- Leader computes target inflight
+    
+- Publishes it via Snowflake / Pod_Health metadata
+    
+- Workers conform to shared limit
+    
+
+This prevents **N pods each thinking they can use full capacity**.
+
+> 💡 Hybrid: local control + leader-published upper bound
+
+---
+
+## 📈 Scaling Behavior with New Pods
+
+With throttling in place:
+
+- New pods do **not** increase API pressure linearly
+- Total inflight remains bounded
+- Throughput increases only if downstream allows it
+    
+
+This is critical for **elastic Kubernetes scaling**.
+
+---
+### ⭐ Recommended Overall Stack for FLEET-Q
+
+| Component     | Choice                           |
+| ------------- | -------------------------------- |
+| Core throttle | Adaptive concurrency limiter     |
+| Error signal  | Throttle exceptions + timeouts   |
+| Safety net    | Exponential backoff              |
+| Smoothing     | Latency-aware ramp-up            |
+| Coordination  | Optional leader-published limits |
+
+---
+# 🚀 Adaptive Throttling in FLEET-Q
+
+## How Local Pods Learn to Respect Downstream Capacity
+
+When FLEET-Q calls downstream systems like **Bedrock** or other APIs, it enters a very different world from task scheduling.
+
+Task queues deal with _abundance_ — there are always more tasks.  
+External APIs deal with _scarcity_ — limited concurrency, rate limits, and shared capacity.
+
+The hardest problem here is not retries.
+
+It is **knowing how much pressure is “just right.”**
+
+To solve this, FLEET-Q adopts a **feedback-driven throttling model**, inspired by decades of distributed systems research — particularly the same ideas that keep the internet itself stable.
+
+---
+
+## 🧠 The Core Insight
+
+> **Don’t guess limits. Learn them.**
+
+Hard-coding rate limits (e.g., “50 requests/sec”) fails because:
+
+- Limits change over time
+    
+- Capacity varies by region, account, and load
+    
+- Latency rises before errors appear
+    
+- Multiple pods amplify pressure unintentionally
+    
+
+Instead, FLEET-Q uses **adaptive control**, where each pod continuously observes outcomes and adjusts its behavior.
+
+This is where **Adaptive Concurrency Limiting** comes in.
+
+---
+## 📊 High-Level Execution & Throttling Flow
+
+```mermaid
+flowchart TD
+    A[Worker Pod Starts] --> B[Heartbeat to POD_HEALTH]
+    B --> C[Claim Steps from STEP_TRACKER<br/>Atomic Transaction]
+    C --> D[Execute Step Locally]
+
+    D --> E[Throttle Controller<br/>AIMD + Latency Aware]
+    E -->|Acquire Permit| F[External API Call<br/>Bedrock or Other API]
+    F --> G{API Response}
+
+    G -->|Success| H[Record Success<br/>Latency and Outcome]
+    G -->|Throttle 429| I[Record Throttle Error]
+    G -->|Timeout or 5xx| J[Record Capacity Error]
+
+    H --> K[Release Permit]
+    I --> K
+    J --> K
+
+    K --> L[Adjust Max Inflight<br/>AIMD Logic]
+    L --> M[Update Step Status<br/>Completed or Failed]
+    M --> C
+
+```
+
+```mermaid
+flowchart LR
+    subgraph Worker_Pod
+        A1[Heartbeat Loop]
+        A2[Claim Loop<br/>Atomic]
+        A3[Execute Loop]
+        A4[Throttle Controller<br/>AIMD + Latency]
+    end
+
+    subgraph Leader_Pod
+        L1[Detect Dead Pods<br/>via POD_HEALTH]
+        L2[Find Orphaned Steps<br/>in STEP_TRACKER]
+        L3[Local SQLite DLQ<br/>Ephemeral]
+        L4[Resubmit Eligible Steps<br/>Back to Pending]
+    end
+
+    subgraph Snowflake
+        S1[POD_HEALTH]
+        S2[STEP_TRACKER]
+    end
+
+    A1 --> S1
+    A2 --> S2
+    A3 --> A4
+    A4 --> External[External API]
+
+    L1 --> S1
+    L2 --> S2
+    L3 --> L4
+    L4 --> S2
+
+```
+
+
+# 1️⃣ Option 1: Adaptive Concurrency Limiting (AIMD)
+
+### 🌊 From Rate Limiting to Pressure Limiting
+
+Most developers think in terms of **rate limits**:
+
+> “Send no more than X requests per second.”
+
+But for APIs like Bedrock, **concurrency matters more than rate**.
+
+A slow request occupies capacity longer than a fast one.  
+Ten concurrent slow calls can be worse than fifty fast ones.
+
+So instead of limiting _rate_, we limit **in-flight requests**.
+
+---
+
+## 🔐 What Is Adaptive Concurrency?
+
+Each pod maintains two simple numbers:
+
+|Variable|Meaning|
+|---|---|
+|`current_inflight`|Requests currently in progress|
+|`max_inflight`|Upper bound allowed at any time|
+
+Before making a request:
+
+- If `current_inflight < max_inflight` → proceed
+    
+- Else → wait
+    
+
+This alone enforces safety.  
+But the real power comes from **how `max_inflight` changes over time**.
+
+---
+
+## ⚖️ AIMD: Additive Increase, Multiplicative Decrease
+
+FLEET-Q uses a proven control law called **AIMD**.
+
+This is not theoretical — it is the reason **TCP congestion control** works at internet scale.
+
+### 📈 Additive Increase (Careful Exploration)
+
+When things are going well:
+
+- Requests succeed
+    
+- No throttling errors
+    
+- Latency is stable
+    
+
+We **increase capacity slowly**:
+
+```
+max_inflight = max_inflight + 1
+```
+
+Why slow?
+
+- We are _probing_ for extra capacity
+    
+- Small steps avoid overshooting
+    
+
+---
+
+### 📉 Multiplicative Decrease (Fast Protection)
+
+When the downstream system pushes back:
+
+- Throttling error (429)
+    
+- Capacity-related timeout
+    
+
+We **cut aggressively**:
+
+```
+max_inflight = max_inflight * 0.5
+```
+
+Why aggressive?
+
+- Throttling means we crossed the limit
+    
+- Fast reduction prevents cascading failure
+    
+- Protects both your system and the API
+    
+
+---
+
+## 🧪 How This Feels in Practice
+
+Imagine `max_inflight` evolving over time:
+
+```
+2 → 3 → 4 → 5 → 6 → 7
+           ↓ throttle
+7 → 3 → 4 → 5 → 6
+```
+
+This oscillation is **healthy**.
+
+You are continuously:
+
+- Discovering available bandwidth
+    
+- Backing off when pressure increases
+    
+- Settling near the true capacity
+    
+
+No configuration needed.  
+No guessing limits.  
+No global coordination.
+
+---
+
+## ✅ Why AIMD Is Ideal for Local Pod Throttling
+
+|Property|Why It Matters|
+|---|---|
+|Stable|Avoids oscillations|
+|Reactive|Responds instantly to throttling|
+|Conservative|Probes capacity gently|
+|Stateless|No coordination required|
+|Proven|Used by TCP, Envoy, Netflix|
+
+This makes AIMD the **default recommendation** for per-pod throttling in FLEET-Q.
+
+---
+
+# 2️⃣ Option 2: Latency-Aware Adaptive Concurrency
+
+### (Pressure Sensing Before Failure)
+
+AIMD reacts **after** something goes wrong.
+
+But in well-designed systems, we can do better.
+
+Latency is often an **early warning signal**.
+
+---
+
+## ⏱ Why Latency Matters
+
+Before an API starts throwing throttling errors:
+
+- Queues fill up
+    
+- Processing slows
+    
+- Response times increase
+    
+
+This means:
+
+> **Latency rises before throttling appears**
+
+If we wait for errors, we are already late.
+
+Latency-aware throttling lets FLEET-Q _sense pressure earlier_.
+
+---
+
+## 🧠 Adding Latency Awareness (Without Complexity)
+
+We don’t need complex math or PID controllers.
+
+A simple heuristic works extremely well.
+
+Each pod tracks:
+
+- Rolling p95 or p99 latency (short window)
+    
+
+Then applies one rule:
+
+> **If latency is rising, stop increasing concurrency.**
+
+---
+
+## 🛑 What Changes Compared to Pure AIMD
+
+### Pure AIMD:
+
+- Increase on success
+    
+- Decrease on throttle
+    
+
+### Latency-Aware AIMD:
+
+- Increase only if latency is stable or decreasing
+    
+- Pause increase if latency rises
+    
+- Still decrease aggressively on throttling
+    
+
+---
+
+## 📊 Behavior Comparison
+
+|Scenario|Pure AIMD|Latency-Aware AIMD|
+|---|---|---|
+|Stable API|Gradual ramp-up|Gradual ramp-up|
+|Near saturation|Keeps probing|Stops probing|
+|Throttle burst|Reactive cut|Fewer throttles|
+|Oscillation|Moderate|Reduced|
+
+Latency awareness makes the system **more polite**.
+
+---
+
+## 🧠 Why This Works So Well
+
+Latency-aware AIMD creates **three layers of protection**:
+
+1. **Concurrency cap** → hard safety
+    
+2. **Latency sensing** → early warning
+    
+3. **Throttle reaction** → emergency brake
+    
+
+Together, they form a **self-regulating feedback loop**.
+
+This is exactly how real-world flow systems behave:
+
+- Water pressure
+    
+- Traffic flow
+    
+- Network congestion
+    
+- Rocket nozzles 🚀
+    
+
+---
+
+## ⚠️ Why Not Use Gradient or PID Controllers?
+
+PID controllers try to optimize mathematically.
+
+But for local pod throttling:
+
+- Signals are noisy
+    
+- Errors are bursty
+    
+- Multiple pods act independently
+    
+- Debugging becomes extremely hard
+    
+
+AIMD + latency heuristics give you:
+
+- Predictability
+    
+- Stability
+    
+- Transparency
+    
+
+In distributed systems, **boring and reliable beats clever and fragile**.
+
+---
+
+## 🧩 How This Fits Into FLEET-Q
+
+In FLEET-Q:
+
+- **Task claiming** controls _what work exists_
+    
+- **Adaptive throttling** controls _how fast external APIs are called_
+    
+
+These layers are independent but complementary.
+
+|Layer|Responsibility|
+|---|---|
+|Queue|Fair, elastic work distribution|
+|Throttle|Respect downstream capacity|
+|Backoff|Retry behavior on failures|
+|Leader|Recovery from dead workers|
+
+---
 ## **🧠 Other Thoughts & Food for Future Consideration**
 
 ### **🧩 Alternative Ways to Track Task Progress**
@@ -353,6 +1046,24 @@ Using globally unique time-ordered IDs (like _Snowflake IDs_) helps with sorting
 ### **🧩 Swapping Datastores**
 
 - In future, you might introduce a **hybrid model** where an OLTP store (e.g., Postgres) fronts the queue for faster claims, with Snowflake _replicating_ queue state for analytics and auditing.   
+
+---
+## 🧪 Advanced Ideas for Dynamic Throttling (Optional, Powerful)
+
+### 🔹 Gradient-Based Control
+
+Adjust inflight based on rate of change of errors (PID-like controller)
+
+### 🔹 Priority-Aware Throttling
+
+Reserve capacity for:
+- retries
+- high-priority tasks
+- control-plane calls
+### 🔹 Circuit Breaker Integration
+
+If error rate exceeds threshold → hard stop for cooling period
+
 ---
 ## **📦 Other Task Queue Libraries in the Python Ecosystem**
 

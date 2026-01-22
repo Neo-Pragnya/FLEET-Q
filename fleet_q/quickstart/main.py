@@ -22,6 +22,7 @@ from config import FleetQConfig, load_config
 from leader import LeaderElection, LeaderRecovery
 from queue import QueueOperations
 from storage import LocalStorage, SnowflakeStorage
+from throttle import AdaptiveThrottle, ThrottleConfig, get_or_create_throttle, with_throttle
 from worker import HealthMonitor, WorkerLoops
 
 # Configure logging
@@ -44,13 +45,58 @@ health_monitor: Optional[HealthMonitor] = None
 leader_recovery: Optional[LeaderRecovery] = None
 leader_election: Optional[LeaderElection] = None
 
+# Adaptive throttles for external APIs
+bedrock_throttle: Optional[AdaptiveThrottle] = None
+external_api_throttle: Optional[AdaptiveThrottle] = None
+
 
 # ============================================================================
 # Task Executor - Customize this for your use case
 # ============================================================================
+
+# Example: Create throttle for Bedrock API (will be initialized at startup)
+# This throttle will be shared across all tasks that call Bedrock
+def get_bedrock_throttle() -> AdaptiveThrottle:
+    """Get or create Bedrock API throttle"""
+    return get_or_create_throttle("bedrock", ThrottleConfig(
+        initial_limit=10,
+        min_limit=1,
+        max_limit=100,
+        additive_increase=1,
+        multiplicative_decrease=0.5,
+        enable_latency_tracking=True,
+        success_threshold=10
+    ))
+
+
+@with_throttle(
+    throttle=get_bedrock_throttle(),
+    throttle_exceptions=(Exception,),  # Replace with actual Bedrock throttle exceptions
+)
+async def call_bedrock_api(payload: Dict[str, Any]) -> Any:
+    """
+    Example function that calls Bedrock API with adaptive throttling.
+    
+    The @with_throttle decorator automatically:
+    - Acquires a throttle slot before execution
+    - Records success/failure outcomes
+    - Adjusts concurrency limits dynamically
+    - Tracks latency for pressure sensing
+    """
+    # Simulate Bedrock API call
+    import asyncio
+    await asyncio.sleep(0.1)  # Replace with actual bedrock call
+    
+    # Example: Check for throttle errors
+    # if response.status_code == 429:
+    #     raise BotoThrottleException("Rate limit exceeded")
+    
+    return {"status": "success", "result": "bedrock response"}
+
+
 def execute_task(step: Dict[str, Any]) -> Any:
     """
-    Custom task execution logic
+    Custom task execution logic with adaptive throttling support.
     
     This is where you implement your actual task processing.
     The step contains:
@@ -78,8 +124,35 @@ def execute_task(step: Dict[str, Any]) -> Any:
     task_type = payload.get('task_type', 'unknown')
     
     # Route to appropriate handler
-    if task_type == 'example_task':
-        # Example: process some data
+    if task_type == 'bedrock_task':
+        # Use adaptive throttling for Bedrock calls
+        throttle = get_bedrock_throttle()
+        
+        # Manual throttle usage (alternative to decorator)
+        with throttle.acquire_sync():
+            import time
+            start = time.time()
+            
+            try:
+                # Call Bedrock API
+                logger.info(f"Calling Bedrock API with throttle (current limit: {throttle.max_inflight})")
+                time.sleep(0.5)  # Replace with actual bedrock call
+                
+                # Record success
+                latency = time.time() - start
+                throttle.record_success(latency=latency)
+                
+                result = {'status': 'completed', 'message': 'Bedrock task executed'}
+            
+            except Exception as e:
+                # Check if it's a throttle error
+                if 'throttle' in str(e).lower() or 'rate limit' in str(e).lower():
+                    throttle.record_throttle()
+                logger.error(f"Bedrock call failed: {e}")
+                raise
+    
+    elif task_type == 'example_task':
+        # Example: process some data (no throttling needed)
         import time
         time.sleep(1)  # Simulate work
         result = {'status': 'completed', 'message': 'Example task executed'}
@@ -233,6 +306,10 @@ class RecoveryResponse(BaseModel):
     stats: Optional[Dict[str, Any]]
 
 
+class ThrottleStatsResponse(BaseModel):
+    throttles: Dict[str, Dict[str, Any]]
+
+
 # ============================================================================
 # API Endpoints
 # ============================================================================
@@ -354,6 +431,62 @@ async def trigger_recovery():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/admin/throttle", response_model=ThrottleStatsResponse)
+async def get_throttle_stats():
+    """
+    Get statistics for all registered adaptive throttles
+    
+    Shows current limits, in-flight requests, success rates, etc.
+    """
+    try:
+        from throttle import get_all_throttles
+        
+        throttles = get_all_throttles()
+        stats = {
+            name: throttle.get_stats()
+            for name, throttle in throttles.items()
+        }
+        
+        return ThrottleStatsResponse(throttles=stats)
+    
+    except Exception as e:
+        logger.error(f"Failed to get throttle stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/throttle/{throttle_name}/reset")
+async def reset_throttle(throttle_name: str):
+    """
+    Reset a specific throttle to its initial state
+    
+    Useful for manual intervention or testing.
+    """
+    try:
+        from throttle import get_all_throttles
+        
+        throttles = get_all_throttles()
+        
+        if throttle_name not in throttles:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Throttle '{throttle_name}' not found"
+            )
+        
+        throttle = throttles[throttle_name]
+        throttle.reset()
+        
+        return {
+            "message": f"Throttle '{throttle_name}' reset successfully",
+            "stats": throttle.get_stats()
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reset throttle: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 async def root():
     """Root endpoint with basic info"""
@@ -368,7 +501,9 @@ async def root():
             "status": "GET /status/{step_id}",
             "queue_stats": "GET /admin/queue",
             "leader_info": "GET /admin/leader",
-            "trigger_recovery": "POST /admin/recovery/run"
+            "trigger_recovery": "POST /admin/recovery/run",
+            "throttle_stats": "GET /admin/throttle",
+            "reset_throttle": "POST /admin/throttle/{throttle_name}/reset"
         }
     }
 

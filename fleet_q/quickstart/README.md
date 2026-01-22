@@ -26,6 +26,7 @@ quickstart/
 ├── schema.sql          # Snowflake table schemas (POD_HEALTH, STEP_TRACKER)
 ├── config.py           # Configuration management (env vars)
 ├── backoff.py          # Exponential backoff decorator (reusable)
+├── throttle.py         # Adaptive throttling with AIMD algorithm (NEW!)
 ├── storage.py          # Snowflake + SQLite storage abstractions
 ├── queue.py            # Core queue operations (submit, claim, complete, fail)
 ├── worker.py           # Worker loops (heartbeat, claim, execute)
@@ -574,6 +575,328 @@ def execute_task(step: Dict[str, Any]) -> Any:
 - **Base delay** should be low enough for responsiveness but high enough to let issues resolve
 - **Max delay** prevents waiting too long on persistent failures
 - **Jitter** is crucial in distributed systems to prevent synchronized retries
+
+## 🚦 Adaptive Throttling with AIMD
+
+FLEET-Q includes a powerful **Adaptive Throttling** system that protects downstream APIs (like AWS Bedrock, OpenAI, or internal services) from being overwhelmed while maximizing throughput.
+
+### The Problem
+
+When processing tasks at scale, you often need to call external APIs. Static rate limits fail because:
+- ❌ API capacity changes dynamically
+- ❌ Multiple pods amplify pressure
+- ❌ Hard-coded limits are either too conservative (waste capacity) or too aggressive (cause throttling)
+- ❌ Latency rises before throttle errors appear
+
+### The Solution: AIMD (Additive Increase, Multiplicative Decrease)
+
+FLEET-Q uses **adaptive concurrency limiting** inspired by TCP congestion control and Netflix's approach:
+
+**Don't guess limits. Learn them through feedback.**
+
+```python
+from throttle import AdaptiveThrottle, ThrottleConfig, with_throttle
+
+# Create a throttle for your API
+bedrock_throttle = AdaptiveThrottle("bedrock", ThrottleConfig(
+    initial_limit=10,      # Start with 10 concurrent requests
+    min_limit=1,           # Never go below 1
+    max_limit=100,         # Cap at 100
+    additive_increase=1,   # Increase by 1 on success
+    multiplicative_decrease=0.5,  # Halve on throttle error
+    enable_latency_tracking=True  # Track latency for pressure sensing
+))
+```
+
+### Basic Usage: Decorator Pattern
+
+The simplest way to use adaptive throttling:
+
+```python
+from throttle import with_throttle, AdaptiveThrottle, ThrottleConfig
+
+# Create throttle
+bedrock_throttle = AdaptiveThrottle("bedrock")
+
+@with_throttle(
+    throttle=bedrock_throttle,
+    throttle_exceptions=(BotoThrottlingException,),  # API-specific exceptions
+    timeout_exceptions=(TimeoutError,)
+)
+async def call_bedrock_api(prompt: str):
+    """Function automatically throttled and monitored"""
+    response = await bedrock_client.invoke(prompt)
+    return response
+
+# Usage - throttling happens automatically
+result = await call_bedrock_api("Tell me a joke")
+```
+
+### Context Manager Pattern
+
+For more control:
+
+```python
+async def process_with_bedrock(data):
+    async with bedrock_throttle.acquire():
+        # Acquired a slot - proceed with API call
+        start = time.time()
+        
+        try:
+            result = await bedrock_client.invoke(data)
+            
+            # Record success with latency
+            latency = time.time() - start
+            bedrock_throttle.record_success(latency=latency)
+            
+            return result
+        
+        except ThrottleException as e:
+            # API says we're going too fast
+            bedrock_throttle.record_throttle()
+            raise
+        
+        except TimeoutError as e:
+            # Possible capacity issue
+            bedrock_throttle.record_timeout()
+            raise
+```
+
+### How AIMD Works
+
+The throttle maintains a dynamic `max_inflight` limit:
+
+| Event | Action | Example |
+|-------|--------|---------|
+| **Success** | Slowly increase limit (additive) | `10 → 11 → 12 → 13` |
+| **Throttle Error** | Quickly decrease limit (multiplicative) | `13 → 6 (halved)` |
+| **Timeout** | Moderately decrease | `10 → 7` |
+| **Rising Latency** | Pause increases | Stay at current limit |
+
+This creates a self-regulating feedback loop:
+
+```
+Limit: 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12
+                              ↓ (throttle error!)
+                              6 → 7 → 8 → 9
+```
+
+The system continuously:
+- **Probes** for available capacity (cautiously)
+- **Backs off** when hitting limits (aggressively)
+- **Settles** near the true capacity
+
+### Latency-Aware Pressure Sensing
+
+The throttle tracks request latency to detect saturation *before* errors occur:
+
+```python
+throttle = AdaptiveThrottle("api", ThrottleConfig(
+    enable_latency_tracking=True,
+    latency_window_size=100,  # Track last 100 requests
+    latency_increase_threshold=1.5  # Pause if latency 1.5x baseline
+))
+```
+
+**Behavior:**
+- ✅ Latency stable → Continue increasing limit
+- ⚠️ Latency rising → Pause increases (early warning)
+- 🚨 Throttle errors → Decrease limit aggressively
+
+This prevents overwhelming the API before it starts rejecting requests.
+
+### Shared Throttles Across Tasks
+
+Use the registry to share throttles across your application:
+
+```python
+from throttle import get_or_create_throttle
+
+# In task executor
+def execute_task(step):
+    task_type = step['PAYLOAD']['task_type']
+    
+    if task_type == 'bedrock_inference':
+        # Get shared throttle (created once, reused everywhere)
+        throttle = get_or_create_throttle("bedrock")
+        
+        with throttle.acquire_sync():
+            result = call_bedrock_sync(step['PAYLOAD'])
+        
+        return result
+```
+
+### Monitoring Throttle Stats
+
+Check throttle status via API or programmatically:
+
+```bash
+# Get stats for all throttles
+curl http://localhost:8000/admin/throttle
+```
+
+Response:
+```json
+{
+  "throttles": {
+    "bedrock": {
+      "max_inflight": 15,
+      "current_inflight": 8,
+      "available_capacity": 7,
+      "total_requests": 1000,
+      "total_successes": 950,
+      "total_throttles": 50,
+      "throttle_rate": 0.05,
+      "current_p95_latency": 0.45,
+      "baseline_latency": 0.3
+    }
+  }
+}
+```
+
+### Reset Throttle (Testing/Manual Intervention)
+
+```bash
+# Reset a throttle to initial state
+curl -X POST http://localhost:8000/admin/throttle/bedrock/reset
+```
+
+### Real-World Example: Bedrock Integration
+
+```python
+from throttle import AdaptiveThrottle, ThrottleConfig, with_throttle
+import boto3
+
+# Configure throttle for Bedrock
+bedrock_throttle = AdaptiveThrottle("bedrock", ThrottleConfig(
+    initial_limit=10,
+    min_limit=2,
+    max_limit=50,
+    enable_latency_tracking=True
+))
+
+# Bedrock-specific exceptions
+from botocore.exceptions import ClientError
+
+def is_throttle_error(e):
+    """Check if boto3 error is a throttle"""
+    if isinstance(e, ClientError):
+        error_code = e.response.get('Error', {}).get('Code', '')
+        return error_code in ['ThrottlingException', 'TooManyRequestsException']
+    return False
+
+@with_throttle(
+    throttle=bedrock_throttle,
+    throttle_exceptions=(ClientError,)
+)
+async def invoke_bedrock_model(prompt: str, model_id: str):
+    """Invoke Bedrock model with adaptive throttling"""
+    client = boto3.client('bedrock-runtime')
+    
+    try:
+        response = client.invoke_model(
+            modelId=model_id,
+            body=json.dumps({"prompt": prompt})
+        )
+        return json.loads(response['body'].read())
+    
+    except ClientError as e:
+        if is_throttle_error(e):
+            # Let decorator handle throttle recording
+            raise
+        # Non-throttle error - don't affect throttle state
+        raise
+
+# Usage
+result = await invoke_bedrock_model(
+    "Explain quantum computing",
+    "anthropic.claude-v2"
+)
+```
+
+### Why AIMD Works So Well
+
+| Property | Benefit |
+|----------|---------|
+| **Stable** | Avoids oscillations that plague PID controllers |
+| **Reactive** | Responds instantly to throttle errors |
+| **Conservative** | Probes capacity gently to avoid overwhelming APIs |
+| **Stateless** | Each pod learns independently, no coordination needed |
+| **Proven** | Same algorithm used by TCP, Envoy, Netflix, gRPC |
+
+### Throttling vs Backoff: Better Together
+
+| Feature | Backoff | Throttling |
+|---------|---------|------------|
+| **When** | After failure | Before request |
+| **What** | Retry timing | Concurrency limit |
+| **Scope** | Per-request | System-wide |
+| **State** | Stateless | Stateful |
+| **Goal** | Recover from errors | Prevent errors |
+
+**Best practice:** Use both!
+- **Throttling** prevents overload by limiting concurrency
+- **Backoff** handles transient failures with retries
+
+```python
+# Combined: Throttle + Backoff
+@with_throttle(bedrock_throttle)
+@with_backoff(max_attempts=3, base_delay_ms=1000)
+async def robust_api_call(data):
+    return await api.call(data)
+```
+
+### Configuration Tips
+
+**Conservative (safe but slower):**
+```python
+ThrottleConfig(
+    initial_limit=5,
+    additive_increase=1,
+    multiplicative_decrease=0.3,  # More aggressive decrease
+    success_threshold=20  # Require more successes before increasing
+)
+```
+
+**Aggressive (faster but riskier):**
+```python
+ThrottleConfig(
+    initial_limit=20,
+    additive_increase=2,  # Increase faster
+    multiplicative_decrease=0.7,  # Less aggressive decrease
+    success_threshold=5  # Increase sooner
+)
+```
+
+**Latency-sensitive:**
+```python
+ThrottleConfig(
+    enable_latency_tracking=True,
+    latency_window_size=50,
+    latency_increase_threshold=1.3  # Very sensitive to latency
+)
+```
+
+### Advanced: Per-Pod vs Leader-Coordinated
+
+**Option A: Local Per-Pod (Default)**
+- Each pod adapts independently
+- Simple, no coordination needed
+- Works well when API limits are high
+
+**Option B: Leader-Coordinated (Future Enhancement)**
+- Leader computes global limit
+- Publishes via Pod_Health metadata
+- Prevents N pods from overwhelming API
+- Better for strict rate limits
+
+### Key Takeaways
+
+✅ Adaptive throttling **learns** API capacity dynamically  
+✅ AIMD algorithm is **stable and proven**  
+✅ Latency tracking provides **early warning**  
+✅ Works seamlessly with **async and sync** functions  
+✅ Minimal configuration, maximum protection
 
 ## 🧪 Testing Locally
 
