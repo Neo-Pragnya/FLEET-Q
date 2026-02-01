@@ -70,14 +70,27 @@ Configure FLEET-Q entirely through environment variables:
 
 ```bash
 # Required Snowflake connection
-export FLEET_Q_SNOWFLAKE_ACCOUNT="your-account"
-export FLEET_Q_SNOWFLAKE_USER="your-user"  
-export FLEET_Q_SNOWFLAKE_PASSWORD="your-password"
-export FLEET_Q_SNOWFLAKE_DATABASE="your-database"
+export SNOWFLAKE_ACCOUNT="your-account"
+export SNOWFLAKE_USER="your-user"  
+export SNOWFLAKE_PASSWORD="your-password"
+export SNOWFLAKE_DATABASE="your-database"
+export SNOWFLAKE_SCHEMA="your-schema"
+export SNOWFLAKE_WAREHOUSE="your-warehouse"
 
-# Optional configuration
-export FLEET_Q_MAX_PARALLELISM="10"
-export FLEET_Q_LOG_LEVEL="INFO"
+# Pod identity
+export FLEET_Q_POD_ID="worker-001"
+
+# Optional: Adaptive configuration (auto-detects from Kubernetes pod resources)
+export FLEET_Q_ENABLE_ADAPTIVE_CONFIG="true"  # Default: true
+
+# Optional: Override auto-detected values
+export FLEET_Q_MAX_PARALLELISM="5"
+export FLEET_Q_AIOMULTIPROCESS_WORKERS="4"
+export FLEET_Q_IOHUB_FLUSH_THREADS="6"
+```
+
+**Pod Resource Detection:**  
+FLEET-Q automatically detects CPU and memory limits from Kubernetes cgroups and configures optimal worker counts. See [Pod Resources Guide](docs/POD_RESOURCES_GUIDE.md) for details.
 export FLEET_Q_LOG_FORMAT="json"
 ```
 
@@ -129,9 +142,18 @@ FLEET-Q implements a unique hybrid architecture:
 
 ## 📚 Documentation
 
+### Getting Started
 - **[Installation Guide](https://fleet-q.readthedocs.io/en/latest/getting-started/installation/)** - Detailed installation instructions
 - **[Quick Start](https://fleet-q.readthedocs.io/en/latest/getting-started/quick-start/)** - Get up and running quickly
+- **[Configuration](https://fleet-q.readthedocs.io/en/latest/getting-started/configuration/)** - Environment variables and settings
+
+### Core Concepts
 - **[Architecture Overview](https://fleet-q.readthedocs.io/en/latest/architecture/overview/)** - Understanding FLEET-Q's design
+- **[Pod Resource Detection](docs/POD_RESOURCES_GUIDE.md)** - Adaptive configuration for Kubernetes
+- **[AIOMultiprocess Integration](docs/AIOMULTIPROCESS_GUIDE.md)** - High-concurrency HTTP workloads
+- **[Multi-Queue Parallelization](docs/Multi-Queue-Parallelization.md)** - In-pod execution patterns
+
+### Reference
 - **[API Reference](https://fleet-q.readthedocs.io/en/latest/api/endpoints/)** - Complete API documentation
 - **[Deployment Guide](https://fleet-q.readthedocs.io/en/latest/operations/deployment/)** - Production deployment
 - **[Examples](https://fleet-q.readthedocs.io/en/latest/examples/basic-usage/)** - Practical usage examples

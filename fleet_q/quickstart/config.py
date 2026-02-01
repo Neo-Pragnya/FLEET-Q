@@ -2,11 +2,24 @@
 FLEET-Q Configuration Management
 
 Loads configuration from environment variables with sensible defaults.
+Includes adaptive configuration based on pod CPU/memory resources (cgroup-aware).
 """
 
 import os
 from dataclasses import dataclass
 from typing import Optional
+
+# Try to import pod resource utilities for adaptive configuration
+try:
+    from cgroup_aware_resources import (
+        recommended_fleet_claim_workers,
+        recommended_aiomultiprocess_workers,
+        recommended_iohub_flush_threads,
+        get_pod_resources
+    )
+    ADAPTIVE_CONFIG_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_CONFIG_AVAILABLE = False
 
 
 @dataclass
@@ -41,9 +54,14 @@ class FleetQConfig:
     recovery_interval: int = 30
     claim_interval: int = 5
     
-    # Capacity management
-    max_parallelism: int = 8
+    # Capacity management (None = auto-detect from cgroups)
+    max_parallelism: Optional[int] = None
+    aiomultiprocess_workers: Optional[int] = None
+    iohub_flush_threads: Optional[int] = None
     capacity_threshold: float = 0.8
+    
+    # Resource detection flags
+    enable_adaptive_config: bool = True  # Auto-detect from cgroups if available
     
     # Dead pod detection
     dead_pod_threshold_seconds: int = 60
@@ -62,7 +80,13 @@ class FleetQConfig:
 
 def load_config() -> FleetQConfig:
     """
-    Load configuration from environment variables.
+    Load configuration from environment variables with adaptive resource detection.
+    
+    Adaptive Configuration:
+    - If FLEET_Q_MAX_PARALLELISM is not set and cgroups are available,
+      automatically detects optimal worker counts based on CPU quota
+    - Falls back to sensible defaults (8 workers) if auto-detection unavailable
+    - Set FLEET_Q_ENABLE_ADAPTIVE_CONFIG=false to disable auto-detection
     
     Required environment variables:
     - FLEET_Q_POD_ID: Unique pod identifier
@@ -81,8 +105,11 @@ def load_config() -> FleetQConfig:
     - FLEET_Q_LEADER_CHECK_INTERVAL: 15 (seconds)
     - FLEET_Q_RECOVERY_INTERVAL: 30 (seconds)
     - FLEET_Q_CLAIM_INTERVAL: 5 (seconds)
-    - FLEET_Q_MAX_PARALLELISM: 8
+    - FLEET_Q_MAX_PARALLELISM: auto-detect or 8
+    - FLEET_Q_AIOMULTIPROCESS_WORKERS: auto-detect or 4
+    - FLEET_Q_IOHUB_FLUSH_THREADS: auto-detect or 4
     - FLEET_Q_CAPACITY_THRESHOLD: 0.8
+    - FLEET_Q_ENABLE_ADAPTIVE_CONFIG: true (enable auto-detection)
     - FLEET_Q_DEAD_POD_THRESHOLD: 60 (seconds)
     - FLEET_Q_MAX_RETRIES: 3
     - FLEET_Q_LOCAL_DB_PATH: /tmp/fleet_q_local.db
@@ -110,6 +137,41 @@ def load_config() -> FleetQConfig:
                 snowflake_config.schema, snowflake_config.warehouse]):
         raise ValueError("All Snowflake connection parameters must be provided")
     
+    # Check if adaptive config is enabled
+    enable_adaptive = os.getenv("FLEET_Q_ENABLE_ADAPTIVE_CONFIG", "true").lower() == "true"
+    
+    # Determine worker counts (auto-detect or use defaults)
+    max_parallelism = None
+    aiomultiprocess_workers = None
+    iohub_flush_threads = None
+    
+    if enable_adaptive and ADAPTIVE_CONFIG_AVAILABLE:
+        # Auto-detect from cgroups
+        try:
+            resources = get_pod_resources()
+            print(f"🔍 Pod Resource Detection:")
+            print(f"  CPU Cores: {resources.cpu_cores:.2f}")
+            print(f"  Memory: {resources.memory_gb:.2f} GB")
+            print(f"  Recommended Fleet Workers: {resources.recommended_fleet_workers}")
+            print(f"  Recommended AIOMultiprocess Workers: {resources.recommended_aiomultiprocess}")
+            print(f"  Recommended IOHub Flush Threads: {resources.recommended_iohub_flush_threads}")
+            
+            # Use environment variables if set, otherwise use auto-detected values
+            max_parallelism = int(os.getenv("FLEET_Q_MAX_PARALLELISM")) if os.getenv("FLEET_Q_MAX_PARALLELISM") else resources.recommended_fleet_workers
+            aiomultiprocess_workers = int(os.getenv("FLEET_Q_AIOMULTIPROCESS_WORKERS")) if os.getenv("FLEET_Q_AIOMULTIPROCESS_WORKERS") else resources.recommended_aiomultiprocess
+            iohub_flush_threads = int(os.getenv("FLEET_Q_IOHUB_FLUSH_THREADS")) if os.getenv("FLEET_Q_IOHUB_FLUSH_THREADS") else resources.recommended_iohub_flush_threads
+            
+        except Exception as e:
+            print(f"⚠️  Adaptive config failed, using defaults: {e}")
+    
+    # Fall back to environment variables or hardcoded defaults
+    if max_parallelism is None:
+        max_parallelism = int(os.getenv("FLEET_Q_MAX_PARALLELISM", "8"))
+    if aiomultiprocess_workers is None:
+        aiomultiprocess_workers = int(os.getenv("FLEET_Q_AIOMULTIPROCESS_WORKERS", "4"))
+    if iohub_flush_threads is None:
+        iohub_flush_threads = int(os.getenv("FLEET_Q_IOHUB_FLUSH_THREADS", "4"))
+    
     return FleetQConfig(
         pod_id=pod_id,
         snowflake=snowflake_config,
@@ -119,8 +181,11 @@ def load_config() -> FleetQConfig:
         leader_check_interval=int(os.getenv("FLEET_Q_LEADER_CHECK_INTERVAL", "15")),
         recovery_interval=int(os.getenv("FLEET_Q_RECOVERY_INTERVAL", "30")),
         claim_interval=int(os.getenv("FLEET_Q_CLAIM_INTERVAL", "5")),
-        max_parallelism=int(os.getenv("FLEET_Q_MAX_PARALLELISM", "8")),
+        max_parallelism=max_parallelism,
+        aiomultiprocess_workers=aiomultiprocess_workers,
+        iohub_flush_threads=iohub_flush_threads,
         capacity_threshold=float(os.getenv("FLEET_Q_CAPACITY_THRESHOLD", "0.8")),
+        enable_adaptive_config=enable_adaptive,
         dead_pod_threshold_seconds=int(os.getenv("FLEET_Q_DEAD_POD_THRESHOLD", "60")),
         max_retries=int(os.getenv("FLEET_Q_MAX_RETRIES", "3")),
         backoff_base_delay_ms=int(os.getenv("FLEET_Q_BACKOFF_BASE_DELAY_MS", "50")),

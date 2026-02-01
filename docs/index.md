@@ -126,6 +126,13 @@ Ready to get started? Check out our guides:
 - **[Installation](getting-started/installation.md)** - Install FLEET-Q in your environment
 - **[Quick Start](getting-started/quick-start.md)** - Get up and running in minutes
 - **[Configuration](getting-started/configuration.md)** - Configure FLEET-Q for your needs
+- **[Pod Resource Detection](POD_RESOURCES_GUIDE.md)** - Adaptive configuration for Kubernetes pods
+
+## Advanced Topics
+
+- **[AIOMultiprocess Integration](AIOMULTIPROCESS_GUIDE.md)** - High-concurrency HTTP workloads
+- **[Multi-Queue Parallelization](Multi-Queue-Parallelization.md)** - In-pod execution patterns
+- **[IOHub Design](Multi-Queue-Parallelization.md#iohub-centralized-aimd-coordinator)** - Centralized throttling coordination
 
 ## Need Help?
 

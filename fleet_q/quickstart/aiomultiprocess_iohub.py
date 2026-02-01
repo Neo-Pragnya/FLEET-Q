@@ -8,6 +8,7 @@ Key benefits:
 - Each process handles many concurrent HTTP calls (async)
 - IOHub coordinates permits across all processes (shared AIMD)
 - Optimal for Bedrock API calls (high latency, low CPU)
+- Adaptive worker count based on pod CPU resources
 """
 
 import asyncio
@@ -23,6 +24,18 @@ except ImportError:
     print("aiomultiprocess not available. Install with: pip install aiomultiprocess")
 
 from iohub import IOHubZMQBased, IOHubClientZMQ
+
+# Import pod resource utilities
+try:
+    from cgroup_aware_resources import (
+        recommended_aiomultiprocess_workers,
+        recommended_async_concurrency,
+        get_pod_resources
+    )
+    CGROUP_AWARE = True
+except ImportError:
+    CGROUP_AWARE = False
+    print("Warning: cgroup_aware_resources not available. Using defaults.")
 
 
 # ============================================================================
@@ -147,23 +160,33 @@ class AIOMultiprocessIOHubExecutor:
     Executor using aiomultiprocess.Pool with IOHub coordination.
     
     This is the optimal pattern for Bedrock-heavy workloads:
-    - 4 processes × 20 concurrent tasks per process = 80 concurrent Bedrock calls
-    - IOHub limits to 20 pod-wide → stable throughput
+    - Auto-detects CPU cores from cgroups (Kubernetes-aware)
+    - N processes × M concurrent per process = optimal throughput
+    - IOHub limits to safe pod-wide level → stable throughput
     - Each process has async event loop → efficient I/O
     """
     
     def __init__(
         self,
         iohub_address: str = "tcp://127.0.0.1:5555",
-        processes: int = 4,
+        processes: int = None,  # Auto-detect if None
         max_tasks_per_child: int = 100
     ):
         if not AIOMULTIPROCESS_AVAILABLE:
             raise ImportError("aiomultiprocess is required. Install with: pip install aiomultiprocess")
         
         self.iohub_address = iohub_address
-        self.processes = processes
         self.max_tasks_per_child = max_tasks_per_child
+        
+        # Auto-detect optimal process count from pod resources
+        if processes is None and CGROUP_AWARE:
+            self.processes = recommended_aiomultiprocess_workers()
+            print(f"[AIOMultiprocess] Auto-detected {self.processes} processes from pod CPU limits")
+        else:
+            self.processes = processes or 4
+            if processes is None:
+                print(f"[AIOMultiprocess] Using default {self.processes} processes (cgroup detection unavailable)")
+        
         self.pool = None
     
     def start(self):
@@ -249,17 +272,27 @@ async def demo_aiomultiprocess():
     Demo using aiomultiprocess.Pool with IOHub.
     
     This shows the production pattern:
-    - IOHub coordinates permits across 4 processes
-    - Each process handles 20 tasks
-    - Total: 80 tasks with controlled concurrency
+    - Auto-detects CPU cores from pod cgroups
+    - IOHub coordinates permits across N processes
+    - Each process handles M tasks concurrently
+    - Total: N×M tasks with controlled pod-wide concurrency
     """
     if not AIOMULTIPROCESS_AVAILABLE:
         print("Skipping aiomultiprocess demo (not installed)")
         return
     
     print("\n" + "=" * 70)
-    print("aiomultiprocess + IOHub Demo")
+    print("aiomultiprocess + IOHub Demo (Adaptive)")
     print("=" * 70 + "\n")
+    
+    # Show pod resources if available
+    if CGROUP_AWARE:
+        resources = get_pod_resources()
+        print(f"[Resources] Detected {resources.cpu_cores:.2f} CPU cores")
+        print(f"[Resources] Recommended workers: {resources.recommended_aiomultiprocess}")
+        if resources.memory_limit_gb:
+            print(f"[Resources] Memory limit: {resources.memory_limit_gb:.2f} GB")
+        print()
     
     # Start IOHub
     iohub_address = "tcp://127.0.0.1:5555"
@@ -270,14 +303,13 @@ async def demo_aiomultiprocess():
     await asyncio.sleep(1)  # Wait for IOHub startup
     print(f"[Demo] IOHub started (PID: {hub_process.pid})\n")
     
-    # Create executor
-    executor = AIOMultiprocessIOHubExecutor(
-        iohub_address=iohub_address,
-        processes=4
-    )
+    # Create executor (auto-detects optimal process count)
+    executor = AIOMultiprocessIOHubExecutor(iohub_address=iohub_address)
     executor.start()
+    print(f"[Demo] Using {executor.processes} worker processes\n")
     
-    # Create tasks
+    # Create tasks (adjust based on worker count)
+    num_tasks = executor.processes * 20  # 20 tasks per process
     tasks = [
         {
             'step_id': f'task-{i:03d}',
@@ -286,11 +318,11 @@ async def demo_aiomultiprocess():
                 'task_type': 'bedrock'
             }
         }
-        for i in range(80)
+        for i in range(num_tasks)
     ]
     
     # Execute batch
-    print(f"[Demo] Executing {len(tasks)} tasks across 4 processes...\n")
+    print(f"[Demo] Executing {len(tasks)} tasks across {executor.processes} processes...\n")
     start = time.time()
     results = await executor.execute_batch(tasks)
     elapsed = time.time() - start
@@ -307,6 +339,7 @@ async def demo_aiomultiprocess():
     print(f"Failed: {failed}")
     print(f"Total time: {elapsed:.2f}s")
     print(f"Throughput: {len(results) / elapsed:.2f} tasks/sec")
+    print(f"Worker efficiency: {successful / executor.processes:.1f} tasks/worker")
     print("=" * 70 + "\n")
     
     # Cleanup
