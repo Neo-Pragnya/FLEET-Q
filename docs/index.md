@@ -133,6 +133,7 @@ Ready to get started? Check out our guides:
 - **[AIOMultiprocess Integration](AIOMULTIPROCESS_GUIDE.md)** - High-concurrency HTTP workloads
 - **[Multi-Queue Parallelization](Multi-Queue-Parallelization.md)** - In-pod execution patterns
 - **[IOHub Design](Multi-Queue-Parallelization.md#iohub-centralized-aimd-coordinator)** - Centralized throttling coordination
+- **[DuckDB Utilities](DUCKDB_UTILS_GUIDE.md)** - Data processing, fuzzy matching, and Snowflake integration
 
 ## Need Help?
 

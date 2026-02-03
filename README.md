@@ -152,6 +152,7 @@ FLEET-Q implements a unique hybrid architecture:
 - **[Pod Resource Detection](docs/POD_RESOURCES_GUIDE.md)** - Adaptive configuration for Kubernetes
 - **[AIOMultiprocess Integration](docs/AIOMULTIPROCESS_GUIDE.md)** - High-concurrency HTTP workloads
 - **[Multi-Queue Parallelization](docs/Multi-Queue-Parallelization.md)** - In-pod execution patterns
+- **[DuckDB Utilities](docs/DUCKDB_UTILS_GUIDE.md)** - Data processing, fuzzy matching, and Snowflake integration
 
 ### Reference
 - **[API Reference](https://fleet-q.readthedocs.io/en/latest/api/endpoints/)** - Complete API documentation
