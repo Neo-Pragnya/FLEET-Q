@@ -93,7 +93,7 @@ export FLEET_Q_IOHUB_FLUSH_THREADS="6"
 FLEET-Q automatically detects CPU and memory limits from Kubernetes cgroups and configures optimal worker counts. See [Pod Resources Guide](docs/POD_RESOURCES_GUIDE.md) for details.
 
 **In-Pod Execution Fabric:**  
-FLEET-Q includes a comprehensive in-pod execution fabric with ZeroMQ messaging, AIMD permit control, and SQLite outbox pattern. See [In-Pod Fabric Guide](docs/IN_POD_FABRIC_GUIDE.md) for details.
+FLEET-Q includes a comprehensive in-pod execution fabric with ZeroMQ messaging, AIMD permit control, and SQLite outbox pattern. See [In-Pod Fabric Guide](docs/pod_resources_allocation/IN_POD_FABRIC_GUIDE.md) for details.
 
 ### Running
 
