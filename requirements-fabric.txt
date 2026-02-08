@@ -1,0 +1,18 @@
+# FLEET-Q In-Pod Execution Fabric Requirements
+
+# Core dependencies
+pyzmq>=25.1.0  # ZeroMQ Python bindings
+apscheduler>=3.10.0  # Scheduled task execution
+aiomultiprocess>=0.9.0  # Async multiprocessing
+
+# Optional dependencies (recommended)
+rapidfuzz>=3.0.0  # Fast fuzzy string matching (for DuckDB utils)
+uvicorn>=0.27.0  # ASGI server for FastAPI
+gunicorn>=21.2.0  # Production WSGI server
+
+# Development dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+black>=23.0.0
+mypy>=1.5.0
