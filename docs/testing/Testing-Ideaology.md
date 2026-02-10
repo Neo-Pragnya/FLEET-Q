@@ -19,13 +19,14 @@ This article provides a practical testing architecture for complex, pipeline-hea
 
 A complex system is “fully tested” when you can show, with evidence:
 
-Proof Type	What you can demonstrate	Typical Evidence
-🧑‍💼 Behavior proof	“Business flows work as intended”	BDD scenario runs + outputs
-🔁 State proof	“Only legal transitions occur”	state transition coverage + logs
-📊 Data truth proof	“DB truth remains consistent under retries/replays”	invariant checks + reconciliation
-🔌 Integration proof	“APIs and schemas won’t drift silently”	contract reports + schema hashes
-🌪 Resilience proof	“System recovers from realistic failures”	chaos/failure run logs + DLQ evidence
-🧾 Governance proof	“We can trace all critical requirements to tests and evidence”	traceability matrix + evidence packs
+| Proof Type | What you can demonstrate | Typical Evidence |
+|---|---|---|
+| 🧑‍💼 Behavior proof | "Business flows work as intended" | BDD scenario runs + outputs |
+| 🔁 State proof | "Only legal transitions occur" | state transition coverage + logs |
+| 📊 Data truth proof | "DB truth remains consistent under retries/replays" | invariant checks + reconciliation |
+| 🔌 Integration proof | "APIs and schemas won't drift silently" | contract reports + schema hashes |
+| 🌪 Resilience proof | "System recovers from realistic failures" | chaos/failure run logs + DLQ evidence |
+| 🧾 Governance proof | "We can trace all critical requirements to tests and evidence" | traceability matrix + evidence packs |
 
 ✅ That is what auditors and principal engineers both accept as “tested.”
 
@@ -50,32 +51,35 @@ State models or specifications are powerful, but too abstract unless you can:
 
 1.2 ✅ The Recommended Hybrid: “BDD + State/Model + Contract + Data” (Risk-Based)
 
-Layer	Best Fit	Why it’s strong for FLEETQ
-🧑‍💼 Business flows / journeys	BDD (Gherkin)	Readable + compliance-friendly acceptance narratives
-🔁 Pipeline orchestration behavior	Model-Based / State-Machine testing	Pipelines are state graphs; covers retries/replays
-🔌 APIs between services	Contract testing (OpenAPI/Pact-style)	Prevents API drift without full env
-🗄️ DB + storage correctness	Data testing (invariants + reconciliation)	Ensures monotonic status, no missing records
-🧠 Logic correctness	Specification-driven + property/invariant tests	“Right output” needs invariants, not just examples
-🌪 Operational + failure modes	Resilience/chaos scenarios	Validates retries, DLQ, backpressure, partial failure
-🧾 Audit readiness	Traceability + Evidence packs	Requirement → scenario → run → evidence
+| Layer | Best Fit | Why it's strong for FLEETQ |
+|---|---|---|
+| 🧑‍💼 Business flows / journeys | BDD (Gherkin) | Readable + compliance-friendly acceptance narratives |
+| 🔁 Pipeline orchestration behavior | Model-Based / State-Machine testing | Pipelines are state graphs; covers retries/replays |
+| 🔌 APIs between services | Contract testing (OpenAPI/Pact-style) | Prevents API drift without full env |
+| 🗄️ DB + storage correctness | Data testing (invariants + reconciliation) | Ensures monotonic status, no missing records |
+| 🧠 Logic correctness | Specification-driven + property/invariant tests | "Right output" needs invariants, not just examples |
+| 🌪 Operational + failure modes | Resilience/chaos scenarios | Validates retries, DLQ, backpressure, partial failure |
+| 🧾 Audit readiness | Traceability + Evidence packs | Requirement → scenario → run → evidence |
 
 1.3 💡 Where BDD Shines (and Where It Doesn’t)
 
-Aspect	BDD Strength	BDD Limitation	What complements it
-Governance readability	✅ Excellent	—	Keep BDD as narrative layer
-Flow testing	✅ Strong	Can miss edge transition paths	Add state/graph coverage
-Retry/replay	⚠️ Hard to enumerate	Deep state-space explosion	State-machine + invariants
-Data truth	⚠️ Not native	DB drift can pass “happy path”	Data invariants + reconciliation
-Integration drift	⚠️ Often missed	“Works in staging” isn’t a contract	Contract tests
+| Aspect | BDD Strength | BDD Limitation | What complements it |
+|---|---|---|---|
+| Governance readability | ✅ Excellent | — | Keep BDD as narrative layer |
+| Flow testing | ✅ Strong | Can miss edge transition paths | Add state/graph coverage |
+| Retry/replay | ⚠️ Hard to enumerate | Deep state-space explosion | State-machine + invariants |
+| Data truth | ⚠️ Not native | DB drift can pass "happy path" | Data invariants + reconciliation |
+| Integration drift | ⚠️ Often missed | "Works in staging" isn't a contract | Contract tests |
 
 1.4 🤔 What “SDD” Means in Practice (and what you should adopt)
 
 “SDD” commonly means one of:
 
-Meaning of SDD	What it implies	Relevance to FLEETQ
-Specification-Driven Development	Tests derive from requirements/specs	✅ Great for traceability
-State-Driven Design/Development	System modeled as explicit state machine	✅ Critical for retries/replays
-Scenario-Driven Development	Scenario-driven approach, similar to BDD	✅ Useful, but overlaps BDD
+| Meaning of SDD | What it implies | Relevance to FLEETQ |
+|---|---|---|
+| Specification-Driven Development | Tests derive from requirements/specs | ✅ Great for traceability |
+| State-Driven Design/Development | System modeled as explicit state machine | ✅ Critical for retries/replays |
+| Scenario-Driven Development | Scenario-driven approach, similar to BDD | ✅ Useful, but overlaps BDD |
 
 ✅ Best interpretation for FLEETQ:
 
@@ -92,14 +96,15 @@ Instead of “a pile of tests,” we build a test architecture that ensures:
 
 2.1 🧩 Define Test Dimensions (Master Taxonomy)
 
-Dimension	What you test	Example scenarios
-🔀 Flow correctness	Ordering, branching, fan-in/out	wrong route, missing stage, fan-in mismatch
-🔁 State correctness	Allowed transitions, terminal states	illegal jump, status regression
-📊 Data correctness	status updates, idempotency	duplicate job, missing result row
-🔌 Integration correctness	API & schema compatibility	breaking response field, contract drift
-⏱ Non-functional	latency, throughput	backlog growth, slow stage
-🧯 Resilience	retries, replay, DLQ	retries exhausted, replay duplicates
-🧾 Security/governance	audit log, RBAC	missing audit record, PII leakage
+| Dimension | What you test | Example scenarios |
+|---|---|---|
+| 🔀 Flow correctness | Ordering, branching, fan-in/out | wrong route, missing stage, fan-in mismatch |
+| 🔁 State correctness | Allowed transitions, terminal states | illegal jump, status regression |
+| 📊 Data correctness | status updates, idempotency | duplicate job, missing result row |
+| 🔌 Integration correctness | API & schema compatibility | breaking response field, contract drift |
+| ⏱ Non-functional | latency, throughput | backlog growth, slow stage |
+| 🧯 Resilience | retries, replay, DLQ | retries exhausted, replay duplicates |
+| 🧾 Security/governance | audit log, RBAC | missing audit record, PII leakage |
 
 
 ⸻
@@ -140,12 +145,13 @@ stateDiagram-v2
 
 3.3 ✅ What This Enables (Your “Proof Set”)
 
-Proof you can claim	What you test	Artifact
-Legal transitions only	transition tests	transition coverage report
-Illegal transitions blocked	negative transition tests	run logs + assertions
-Retry policy correctness	retry graph tests	retry run evidence + counters
-Replay idempotency	replay tests + invariants	DB invariant evidence
-Terminal state finality	terminal lock tests	status history proof
+| Proof you can claim | What you test | Artifact |
+|---|---|---|
+| Legal transitions only | transition tests | transition coverage report |
+| Illegal transitions blocked | negative transition tests | run logs + assertions |
+| Retry policy correctness | retry graph tests | retry run evidence + counters |
+| Replay idempotency | replay tests + invariants | DB invariant evidence |
+| Terminal state finality | terminal lock tests | status history proof |
 
 
 ⸻
@@ -181,11 +187,12 @@ mkdocs.yml
 
 4.1 ✅ Why This Works for Governance
 
-Goal	How structure supports it
-Audit traceability	03_traceability_matrix.md + evidence packs
-Repeatability	datasets + expected outputs are versioned
-Accountability	runs are tied to git SHA/build IDs
-Knowledge retention	“why we tested this” remains documented
+| Goal | How structure supports it |
+|---|---|
+| Audit traceability | 03_traceability_matrix.md + evidence packs |
+| Repeatability | datasets + expected outputs are versioned |
+| Accountability | runs are tied to git SHA/build IDs |
+| Knowledge retention | "why we tested this" remains documented |
 
 
 ⸻
@@ -210,13 +217,14 @@ Required sections
 
 Drop-in coverage table
 
-Test Type	What it proves	Evidence artifact
-BDD acceptance	End-to-end behavior	scenario run logs + outputs
-Contract	API compatibility	contract report + schema hash
-State-machine	transitions + retry rules	transition coverage report
-Data invariants	DB truth correctness	invariant check report
-Performance	latency/throughput	load report + dashboard screenshots
-Resilience	failure recovery	chaos logs + DLQ evidence
+| Test Type | What it proves | Evidence artifact |
+|---|---|---|
+| BDD acceptance | End-to-end behavior | scenario run logs + outputs |
+| Contract | API compatibility | contract report + schema hash |
+| State-machine | transitions + retry rules | transition coverage report |
+| Data invariants | DB truth correctness | invariant check report |
+| Performance | latency/throughput | load report + dashboard screenshots |
+| Resilience | failure recovery | chaos logs + DLQ evidence |
 
 
 ⸻
@@ -227,16 +235,17 @@ docs/testing/scenarios/fleetq_pipeline_scenarios.md
 
 Scenario header block
 
-Field	Value
-Scenario ID	FLEETQ-BDD-###
-Requirement ID(s)	REQ-###, POL-###
-Risk ID(s)	RISK-###
-Components	API, Orchestrator, DB, Worker
-Data needed	dataset IDs / synthetic rules
-Expected output	status + payload + DB rows
-Observability	logs/metrics/traces signals
-Negative cases	validation fail, retries, partial failure
-Evidence	link to run doc
+| Field | Value |
+|---|---|
+| Scenario ID | FLEETQ-BDD-### |
+| Requirement ID(s) | REQ-###, POL-### |
+| Risk ID(s) | RISK-### |
+| Components | API, Orchestrator, DB, Worker |
+| Data needed | dataset IDs / synthetic rules |
+| Expected output | status + payload + DB rows |
+| Observability | logs/metrics/traces signals |
+| Negative cases | validation fail, retries, partial failure |
+| Evidence | link to run doc |
 
 Gherkin skeleton
 
@@ -262,11 +271,12 @@ Template C — 📊 Data Testing Spec (docs/testing/scenarios/database_scenarios
 
 Data invariants table
 
-Invariant ID	Rule	Why it matters	How to verify	Evidence
-DATA-INV-01	Status is monotonic	Prevents replay corruption	query status history	run link
-DATA-INV-02	Exactly one terminal status	Prevents double-complete	count terminal states	run link
-DATA-INV-03	Idempotency key unique	Prevents duplicate processing	unique index/check	run link
-DATA-INV-04	Output hash matches output	Ensures integrity	recompute + compare	run link
+| Invariant ID | Rule | Why it matters | How to verify | Evidence |
+|---|---|---|---|---|
+| DATA-INV-01 | Status is monotonic | Prevents replay corruption | query status history | run link |
+| DATA-INV-02 | Exactly one terminal status | Prevents double-complete | count terminal states | run link |
+| DATA-INV-03 | Idempotency key unique | Prevents duplicate processing | unique index/check | run link |
+| DATA-INV-04 | Output hash matches output | Ensures integrity | recompute + compare | run link |
 
 
 ⸻
@@ -275,10 +285,11 @@ Template D — 🔗 Traceability Matrix (docs/testing/03_traceability_matrix.md)
 
 This is the audit “killer feature.”
 
-Requirement	Scenario IDs	Test Type	Evidence Run
-REQ-101 lifecycle statuses	FLEETQ-BDD-001, DATA-INV-01	BDD + Data	run_20260208_build123
-REQ-115 retry policy	FLEETQ-RES-004	State + Resilience	run_20260208_build123
-POL-09 audit logging	FLEETQ-BDD-001	BDD	run_20260208_build123
+| Requirement | Scenario IDs | Test Type | Evidence Run |
+|---|---|---|---|
+| REQ-101 lifecycle statuses | FLEETQ-BDD-001, DATA-INV-01 | BDD + Data | run_20260208_build123 |
+| REQ-115 retry policy | FLEETQ-RES-004 | State + Resilience | run_20260208_build123 |
+| POL-09 audit logging | FLEETQ-BDD-001 | BDD | run_20260208_build123 |
 
 
 ⸻
@@ -302,11 +313,12 @@ Include:
 
 Lightweight risk model (audit-friendly)
 
-Risk	Severity	Likelihood	Coverage expectation
-Status corruption	High	Medium	invariants + replay tests
-API contract drift	High	High	contract tests each change
-Queue backlog/backpressure	Medium	High	load + backpressure tests
-Duplicate processing	High	Medium	idempotency + reconciliation
+| Risk | Severity | Likelihood | Coverage expectation |
+|---|---|---|---|
+| Status corruption | High | Medium | invariants + replay tests |
+| API contract drift | High | High | contract tests each change |
+| Queue backlog/backpressure | Medium | High | load + backpressure tests |
+| Duplicate processing | High | Medium | idempotency + reconciliation |
 
 6.2 🎯 State coverage target (formal “complete enough”)
 

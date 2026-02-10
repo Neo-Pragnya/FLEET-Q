@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from config import FleetQConfig, load_config
+from control_plane import ControlPlaneWorker, get_control_plane, initialize_control_plane
 from leader import LeaderElection, LeaderRecovery
 from queue import QueueOperations
 from storage import LocalStorage, SnowflakeStorage
@@ -44,6 +45,7 @@ worker_loops: Optional[WorkerLoops] = None
 health_monitor: Optional[HealthMonitor] = None
 leader_recovery: Optional[LeaderRecovery] = None
 leader_election: Optional[LeaderElection] = None
+control_plane: Optional[ControlPlaneWorker] = None
 
 # Adaptive throttles for external APIs
 bedrock_throttle: Optional[AdaptiveThrottle] = None
@@ -182,7 +184,7 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown
     """
     global config, storage, local_storage, queue_ops, worker_loops
-    global health_monitor, leader_recovery, leader_election
+    global health_monitor, leader_recovery, leader_election, control_plane
     
     logger.info("=" * 80)
     logger.info("FLEET-Q Starting...")
@@ -195,6 +197,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"Pod ID: {config.pod_id}")
         logger.info(f"Max parallelism: {config.max_parallelism}")
         logger.info(f"Capacity threshold: {config.capacity_threshold}")
+        logger.info(f"Control Plane: {'Enabled' if config.enable_control_plane else 'Disabled'}")
         
         # Initialize storage
         logger.info("Initializing storage...")
@@ -220,10 +223,28 @@ async def lifespan(app: FastAPI):
         logger.info("Initializing worker loops...")
         worker_loops = WorkerLoops(config, storage, queue_ops, execute_task)
         
+        # Initialize Control Plane (if enabled)
+        if config.enable_control_plane:
+            logger.info("Initializing Control Plane Worker...")
+            control_plane = initialize_control_plane(
+                pod_id=config.pod_id,
+                storage_conn=storage,
+                flush_interval=config.control_plane_flush_interval,
+                maintenance_interval=config.control_plane_maintenance_interval,
+                base_path=config.control_plane_base_path
+            )
+            logger.info(f"  Flush interval: {config.control_plane_flush_interval}s")
+            logger.info(f"  Base path: {config.control_plane_base_path}/{config.pod_id}")
+            logger.info(f"  Writer pool: {config.control_plane_min_writers}-{config.control_plane_max_writers} workers")
+        
         # Start background loops
         logger.info("Starting background loops...")
         await worker_loops.start()
         await leader_recovery.start()
+        
+        if control_plane:
+            await control_plane.start()
+            logger.info("Control Plane Worker started")
         
         logger.info("=" * 80)
         logger.info("FLEET-Q Started Successfully!")
@@ -237,6 +258,10 @@ async def lifespan(app: FastAPI):
         logger.info("=" * 80)
         logger.info("FLEET-Q Shutting down...")
         logger.info("=" * 80)
+        
+        if control_plane:
+            await control_plane.stop()
+            logger.info("Control Plane stopped")
         
         if worker_loops:
             await worker_loops.stop()
@@ -487,24 +512,227 @@ async def reset_throttle(throttle_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# Control Plane Endpoints
+# ============================================================================
+
+class BulkWriteRequest(BaseModel):
+    writer_type: str  # "snowflake", "sharepoint", "bedrock", etc.
+    destination: str  # table name, bucket, etc.
+    data: Dict[str, Any]
+    orm_type: Optional[str] = None
+    priority: int = 0
+
+
+class BulkWriteResponse(BaseModel):
+    operation_id: str
+    status: str = "queued"
+    message: str = "Operation queued for bulk processing"
+
+
+class ControlPlaneStatsResponse(BaseModel):
+    enabled: bool
+    pod_id: str
+    running: bool
+    buffer_stats: Dict[str, Any]
+    storage_stats: Dict[str, Any]
+    writer_pool: Dict[str, Any]
+
+
+@app.post("/control-plane/write", response_model=BulkWriteResponse)
+async def submit_bulk_write(request: BulkWriteRequest):
+    """
+    Submit a write operation to the control plane for bulk processing.
+    
+    Operations are batched and written in bulk after pooling for 15-30 seconds.
+    
+    Example:
+    {
+        "writer_type": "snowflake",
+        "destination": "MY_TABLE",
+        "data": {"col1": "value1", "col2": "value2"},
+        "orm_type": "sqlalchemy",
+        "priority": 1
+    }
+    """
+    if not control_plane:
+        raise HTTPException(
+            status_code=503,
+            detail="Control plane not enabled or not initialized"
+        )
+    
+    try:
+        from control_plane import WriterType, submit_bulk_write
+        
+        # Map string to WriterType enum
+        writer_type_map = {
+            "snowflake": WriterType.SNOWFLAKE,
+            "sharepoint": WriterType.SHAREPOINT,
+            "bedrock": WriterType.BEDROCK,
+            "s3": WriterType.S3,
+            "local_db": WriterType.LOCAL_DB
+        }
+        
+        writer_type = writer_type_map.get(request.writer_type.lower())
+        if not writer_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid writer_type. Must be one of: {list(writer_type_map.keys())}"
+            )
+        
+        operation_id = await submit_bulk_write(
+            writer_type=writer_type,
+            destination=request.destination,
+            data=request.data,
+            orm_type=request.orm_type,
+            priority=request.priority
+        )
+        
+        return BulkWriteResponse(
+            operation_id=operation_id,
+            status="queued",
+            message=f"Operation queued for bulk processing (will flush in ~{config.control_plane_flush_interval}s)"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to submit bulk write: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/control-plane/stats", response_model=ControlPlaneStatsResponse)
+async def get_control_plane_stats():
+    """
+    Get control plane statistics and status.
+    
+    Returns information about:
+    - Buffer sizes by destination/ORM
+    - Pending operations
+    - Active writer pool size
+    - Queue depth
+    """
+    if not control_plane:
+        return ControlPlaneStatsResponse(
+            enabled=False,
+            pod_id=config.pod_id,
+            running=False,
+            buffer_stats={},
+            storage_stats={},
+            writer_pool={}
+        )
+    
+    try:
+        stats = control_plane.get_stats()
+        
+        return ControlPlaneStatsResponse(
+            enabled=True,
+            pod_id=stats['pod_id'],
+            running=stats['running'],
+            buffer_stats=stats['buffer_stats'],
+            storage_stats=stats['storage_stats'],
+            writer_pool=stats['writer_pool']
+        )
+    
+    except Exception as e:
+        logger.error(f"Failed to get control plane stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/control-plane/flush")
+async def trigger_flush():
+    """
+    Manually trigger a flush of all write buffers.
+    
+    Useful for testing or when immediate writes are needed.
+    """
+    if not control_plane:
+        raise HTTPException(
+            status_code=503,
+            detail="Control plane not enabled or not initialized"
+        )
+    
+    try:
+        # Get batches to flush
+        batches = control_plane.buffer_manager.get_batches_to_flush()
+        
+        # Submit to writer pool
+        for batch in batches:
+            await control_plane.writer_pool.submit_batch(batch)
+            control_plane.local_storage.record_batch(batch, status='queued')
+        
+        # Scale workers if needed
+        await control_plane.writer_pool.scale_workers(control_plane.storage_conn)
+        
+        return {
+            "message": f"Flushed {len(batches)} batches",
+            "batches_flushed": len(batches),
+            "total_operations": sum(batch.size() for batch in batches)
+        }
+    
+    except Exception as e:
+        logger.error(f"Failed to trigger flush: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/control-plane/maintenance")
+async def trigger_maintenance():
+    """
+    Manually trigger database maintenance.
+    
+    Cleans up old completed operations and batch history.
+    """
+    if not control_plane:
+        raise HTTPException(
+            status_code=503,
+            detail="Control plane not enabled or not initialized"
+        )
+    
+    try:
+        control_plane.local_storage.cleanup_old_records(max_age_seconds=86400)
+        stats = control_plane.local_storage.get_stats()
+        
+        return {
+            "message": "Maintenance completed successfully",
+            "storage_stats": stats
+        }
+    
+    except Exception as e:
+        logger.error(f"Failed to trigger maintenance: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 async def root():
     """Root endpoint with basic info"""
+    control_plane_enabled = control_plane is not None and control_plane.running
+    
+    endpoints = {
+        "health": "/health",
+        "submit": "POST /submit",
+        "status": "GET /status/{step_id}",
+        "queue_stats": "GET /admin/queue",
+        "leader_info": "GET /admin/leader",
+        "trigger_recovery": "POST /admin/recovery/run",
+        "throttle_stats": "GET /admin/throttle",
+        "reset_throttle": "POST /admin/throttle/{throttle_name}/reset"
+    }
+    
+    if control_plane_enabled:
+        endpoints.update({
+            "control_plane_write": "POST /control-plane/write",
+            "control_plane_stats": "GET /control-plane/stats",
+            "control_plane_flush": "POST /control-plane/flush",
+            "control_plane_maintenance": "POST /control-plane/maintenance"
+        })
+    
     return {
         "service": "FLEET-Q",
         "description": "Federated Leaderless Execution & Elastic Tasking Queue",
         "version": "1.0.0",
         "pod_id": config.pod_id,
-        "endpoints": {
-            "health": "/health",
-            "submit": "POST /submit",
-            "status": "GET /status/{step_id}",
-            "queue_stats": "GET /admin/queue",
-            "leader_info": "GET /admin/leader",
-            "trigger_recovery": "POST /admin/recovery/run",
-            "throttle_stats": "GET /admin/throttle",
-            "reset_throttle": "POST /admin/throttle/{throttle_name}/reset"
-        }
+        "control_plane_enabled": control_plane_enabled,
+        "endpoints": endpoints
     }
 
 

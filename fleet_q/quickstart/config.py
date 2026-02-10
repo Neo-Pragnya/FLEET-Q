@@ -76,6 +76,15 @@ class FleetQConfig:
     
     # Local SQLite path (for leader DLQ)
     local_db_path: str = "/tmp/fleet_q_local.db"
+    
+    # Control Plane configuration
+    enable_control_plane: bool = True
+    control_plane_flush_interval: float = 20.0  # Seconds (15-30 recommended)
+    control_plane_maintenance_interval: float = 3600.0  # 1 hour
+    control_plane_base_path: str = "/tmp/fleetq"  # Base path for pod SQLite databases
+    control_plane_max_batch_size: int = 1000
+    control_plane_min_writers: int = 1
+    control_plane_max_writers: int = 8
 
 
 def load_config() -> FleetQConfig:
@@ -113,6 +122,13 @@ def load_config() -> FleetQConfig:
     - FLEET_Q_DEAD_POD_THRESHOLD: 60 (seconds)
     - FLEET_Q_MAX_RETRIES: 3
     - FLEET_Q_LOCAL_DB_PATH: /tmp/fleet_q_local.db
+    - FLEET_Q_ENABLE_CONTROL_PLANE: true (enable control plane worker)
+    - FLEET_Q_CONTROL_PLANE_FLUSH_INTERVAL: 20.0 (seconds, 15-30 recommended)
+    - FLEET_Q_CONTROL_PLANE_MAINTENANCE_INTERVAL: 3600.0 (seconds)
+    - FLEET_Q_CONTROL_PLANE_BASE_PATH: /tmp/fleetq
+    - FLEET_Q_CONTROL_PLANE_MAX_BATCH_SIZE: 1000
+    - FLEET_Q_CONTROL_PLANE_MIN_WRITERS: 1
+    - FLEET_Q_CONTROL_PLANE_MAX_WRITERS: 8
     """
     
     # Required fields
@@ -192,4 +208,11 @@ def load_config() -> FleetQConfig:
         backoff_max_delay_ms=int(os.getenv("FLEET_Q_BACKOFF_MAX_DELAY_MS", "5000")),
         backoff_max_attempts=int(os.getenv("FLEET_Q_BACKOFF_MAX_ATTEMPTS", "5")),
         local_db_path=os.getenv("FLEET_Q_LOCAL_DB_PATH", "/tmp/fleet_q_local.db"),
+        enable_control_plane=os.getenv("FLEET_Q_ENABLE_CONTROL_PLANE", "true").lower() == "true",
+        control_plane_flush_interval=float(os.getenv("FLEET_Q_CONTROL_PLANE_FLUSH_INTERVAL", "20.0")),
+        control_plane_maintenance_interval=float(os.getenv("FLEET_Q_CONTROL_PLANE_MAINTENANCE_INTERVAL", "3600.0")),
+        control_plane_base_path=os.getenv("FLEET_Q_CONTROL_PLANE_BASE_PATH", "/tmp/fleetq"),
+        control_plane_max_batch_size=int(os.getenv("FLEET_Q_CONTROL_PLANE_MAX_BATCH_SIZE", "1000")),
+        control_plane_min_writers=int(os.getenv("FLEET_Q_CONTROL_PLANE_MIN_WRITERS", "1")),
+        control_plane_max_writers=int(os.getenv("FLEET_Q_CONTROL_PLANE_MAX_WRITERS", "8")),
     )
